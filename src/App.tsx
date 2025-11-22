@@ -1189,7 +1189,7 @@ const handleRestoreEncryptedBackup = async () => {
   <p>
     <span>{t(lang, "footer_copyright_prefix")} </span>
     <a
-      href="https://github.com/pandabyte-labs/eigenfolio"
+      href="https://github.com/pandabytelabs/eigenfolio"
       target="_blank"
       rel="noreferrer"
     >
