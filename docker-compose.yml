@@ -7,3 +7,4 @@ services:
       - "5173:5173"
     environment:
       DISABLE_CLOUD_CONNECT: "false"
+      EIGENFOLIO_ALLOWED_HOSTS: "all" # Default: allow all hosts (recommended to override in production)
