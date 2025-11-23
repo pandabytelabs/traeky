@@ -12,7 +12,7 @@ import packageJson from "../package.json";
 const RESET_CONFIRMATION_WORD = "DELETE";
 
 const APP_VERSION = packageJson.version;
-const LOCAL_STORAGE_LANG_KEY = "eigenfolio_lang";
+const LOCAL_STORAGE_LANG_KEY = "trakky_lang";
 
 const CLOUD_CONNECT_ENABLED = import.meta.env.DISABLE_CLOUD_CONNECT === "true" ? false : true;
 
@@ -562,7 +562,7 @@ const handleExportCsv = () => {
   const a = document.createElement("a");
   a.href = url;
   const stamp = new Date().toISOString().slice(0, 10);
-  a.download = `eigenfolio-transactions-${stamp}.csv`;
+  a.download = `trakky-transactions-${stamp}.csv`;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -756,7 +756,7 @@ const handleDownloadEncryptedBackup = async () => {
     const a = document.createElement("a");
     const stamp = new Date().toISOString().slice(0, 10);
     a.href = url;
-    a.download = `eigenfolio-cloud-backup-${stamp}.json`;
+    a.download = `trakky-cloud-backup-${stamp}.json`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -1531,7 +1531,7 @@ const handleRestoreEncryptedBackup = async () => {
   <p>
     <span>{t(lang, "footer_copyright_prefix")} </span>
     <a
-      href="https://github.com/pandabytelabs/eigenfolio"
+      href="https://github.com/pandabytelabs/trakky"
       target="_blank"
       rel="noreferrer"
     >
