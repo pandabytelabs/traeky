@@ -19,8 +19,8 @@ let xlsxModulePromise: Promise<any> | null = null;
 
 async function getXlsxModule(): Promise<any> {
   if (!xlsxModulePromise) {
-    // Dynamic import keeps the initial bundle smaller.
-    xlsxModulePromise = import("xlsx");
+    // Use locally vendored SheetJS CE 0.19.3 to avoid vulnerable npm xlsx.
+    xlsxModulePromise = import("../vendor/sheetjs/xlsx.mjs");
   }
   return xlsxModulePromise;
 }
