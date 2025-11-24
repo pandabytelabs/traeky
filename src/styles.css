@@ -434,6 +434,72 @@ body {
   letter-spacing: 0.06em;
   color: var(--text-muted);
 }
+/* Transaction history table column sizing */
+.tx-table th,
+.tx-table td {
+  /* Allow wrapping inside the transaction table where needed */
+  white-space: normal;
+}
+
+.tx-table th:nth-child(1),
+.tx-table td:nth-child(1) {
+  min-width: 7rem; /* Time */
+}
+
+.tx-table th:nth-child(2),
+.tx-table td:nth-child(2) {
+  min-width: 6rem; /* Asset, slightly narrower */
+}
+
+.tx-table th:nth-child(4),
+.tx-table td:nth-child(4) {
+  min-width: 7rem; /* Amount */
+  text-align: right;
+}
+
+.tx-table th:nth-child(5),
+.tx-table td:nth-child(5) {
+  min-width: 7.5rem; /* Price */
+  text-align: right;
+}
+
+.tx-table th:nth-child(6),
+.tx-table td:nth-child(6) {
+  min-width: 8rem; /* Value */
+  text-align: right;
+}
+
+.tx-table th:nth-child(7),
+.tx-table td:nth-child(7) {
+  max-width: 10rem; /* Tx ID, wrap instead of ellipsis */
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.tx-table th:nth-child(8),
+.tx-table td:nth-child(8) {
+  max-width: 8rem; /* Source, wrap earlier */
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.tx-table th:nth-child(9),
+.tx-table td:nth-child(9) {
+  max-width: 7rem; /* Holding badge */
+}
+
+.tx-table th:nth-child(10),
+.tx-table td:nth-child(10) {
+  max-width: 11rem; /* Note, narrower and wrapping earlier */
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.tx-table th:nth-child(11),
+.tx-table td:nth-child(11) {
+  white-space: nowrap; /* Action buttons stay on one line */
+}
+
 
 .table-striped tbody tr:nth-child(even) {
   background: rgba(15, 23, 42, 0.75);

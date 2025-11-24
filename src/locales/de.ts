@@ -99,7 +99,6 @@ export const de: Record<string, string> = {
   holding_config_save_button: "Speichern",
   holding_config_title: "Haltefrist",
   holding_reached: "Haltefrist erreicht",
-  holding_until_prefix: "Haltefrist bis",
   holdings_col_amount: "Menge",
   holdings_col_asset: "Asset",
   holdings_col_value_eur: "Wert in EUR",

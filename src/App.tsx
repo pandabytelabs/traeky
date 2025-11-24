@@ -1858,7 +1858,7 @@ const handleRestoreEncryptedBackup = async () => {
             <p className="muted">{t(lang, "table_tx_empty")}</p>
           ) : (
             <>
-            <table className="table table-striped">
+            <table className="table table-striped tx-table">
               <thead>
                 <tr>
                   <th>{t(lang, "table_col_time")}</th>
@@ -1881,7 +1881,28 @@ const handleRestoreEncryptedBackup = async () => {
 
                   return (
                     <tr key={tx.id ?? `tx-${index}`}>
-                      <td>{dateTimeFormatter.format(new Date(tx.timestamp))}</td>
+                      <td>
+  {(() => {
+    const formatted = dateTimeFormatter.format(new Date(tx.timestamp));
+    const parts = formatted.split(",");
+    const datePart = parts[0]?.trim() ?? formatted;
+    const timePart = parts[1]?.trim();
+
+    // Render date and time on separate lines, breaking after the comma
+    if (!timePart) {
+      return formatted;
+    }
+
+    return (
+      <>
+        {datePart}
+        {","}
+        <br />
+        {timePart}
+      </>
+    );
+  })()}
+</td>
                       <td>{tx.asset_symbol}</td>
                       <td>{formatTxTypeLabel(tx.tx_type)}</td>
                       <td>{tx.amount}</td>
@@ -1980,7 +2001,6 @@ const handleRestoreEncryptedBackup = async () => {
                           </span>
                         ) : endDate ? (
                           <span className="pill pill-warning">
-                            {t(lang, "holding_until_prefix")}{" "}
                             {dateFormatter.format(endDate)}
                           </span>
                         ) : (
