@@ -16,6 +16,21 @@ const LOCAL_STORAGE_LANG_KEY = "trakky_lang";
 
 const CLOUD_CONNECT_ENABLED = import.meta.env.DISABLE_CLOUD_CONNECT === "true" ? false : true;
 
+function formatTxTypeLabel(txType: string | null | undefined): string {
+  const code = (txType || "").toUpperCase();
+  switch (code) {
+    case "STAKING_REWARD":
+      return "STAKING REWARD";
+    case "TRANSFER_IN":
+      return "TRANSFER (IN)";
+    case "TRANSFER_OUT":
+      return "TRANSFER (OUT)";
+    default:
+      return code || "";
+  }
+}
+
+// Convert a UTC timestamp string to a Date restricted to the local timezone.
 function toLocalInputValue(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -1819,9 +1834,9 @@ const handleRestoreEncryptedBackup = async () => {
               <option value="">{t(lang, "tx_filter_type_all")}</option>
               <option value="BUY">BUY</option>
               <option value="SELL">SELL</option>
-              <option value="TRANSFER_IN">TRANSFER_IN</option>
-              <option value="TRANSFER_OUT">TRANSFER_OUT</option>
-              <option value="STAKING_REWARD">STAKING_REWARD</option>
+              <option value="TRANSFER_IN">TRANSFER (IN)</option>
+              <option value="TRANSFER_OUT">TRANSFER (OUT)</option>
+              <option value="STAKING_REWARD">STAKING REWARD</option>
               <option value="AIRDROP">AIRDROP</option>
             </select>
           </div>
@@ -1868,7 +1883,7 @@ const handleRestoreEncryptedBackup = async () => {
                     <tr key={tx.id ?? `tx-${index}`}>
                       <td>{dateTimeFormatter.format(new Date(tx.timestamp))}</td>
                       <td>{tx.asset_symbol}</td>
-                      <td>{tx.tx_type}</td>
+                      <td>{formatTxTypeLabel(tx.tx_type)}</td>
                       <td>{tx.amount}</td>
                                             <td>
                         {(() => {
@@ -2234,9 +2249,9 @@ const handleRestoreEncryptedBackup = async () => {
                 <select name="tx_type" value={form.tx_type} onChange={handleChange}>
                   <option value="BUY">BUY</option>
                   <option value="SELL">SELL</option>
-                  <option value="TRANSFER_IN">TRANSFER_IN</option>
-                  <option value="TRANSFER_OUT">TRANSFER_OUT</option>
-                  <option value="STAKING_REWARD">STAKING_REWARD</option>
+                  <option value="TRANSFER_IN">TRANSFER (IN)</option>
+                  <option value="TRANSFER_OUT">TRANSFER (OUT)</option>
+                  <option value="STAKING_REWARD">STAKING REWARD</option>
                   <option value="AIRDROP">AIRDROP</option>
                 </select>
               </div>

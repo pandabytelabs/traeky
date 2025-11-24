@@ -1523,6 +1523,22 @@ class LocalDataSource implements PortfolioDataSource {
     const txs = transactions ?? loadLocalTransactions();
     const config = loadLocalConfig();
 
+    // Map internal transaction type codes to human-readable labels in the PDF.
+    // The internal codes are kept unchanged for storage and processing.
+    const formatTxTypeForPdf = (txType: string | null | undefined): string => {
+      const code = (txType || "").toUpperCase();
+      switch (code) {
+        case "STAKING_REWARD":
+          return "STAKING\nREWARD";
+        case "TRANSFER_IN":
+          return "TRANSFER\n(IN)";
+        case "TRANSFER_OUT":
+          return "TRANSFER\n(OUT)";
+        default:
+          return code;
+      }
+    };
+
     // Use landscape orientation for better column layout
     const doc = new jsPDF({ orientation: "landscape" });
 
@@ -1650,7 +1666,7 @@ class LocalDataSource implements PortfolioDataSource {
       return [
         timeStr,
         tx.asset_symbol ?? "",
-        tx.tx_type ?? "",
+        formatTxTypeForPdf(tx.tx_type),
         amountStr,
         priceStr,
         valueStr,
@@ -1698,26 +1714,29 @@ class LocalDataSource implements PortfolioDataSource {
       colX[i] += extraGapBetweenCurAndSource;
     }
 
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "bold");
+    const tableFontSize = 9;
+    const tableFontFamily = "times";
+    const lineHeight = 4.5;
+
+    doc.setFontSize(tableFontSize);
+    doc.setFont(tableFontFamily, "bold");
     headers.forEach((h, idx) => {
       doc.text(h, colX[idx], y);
     });
 
-    doc.setFont("helvetica", "normal");
-
-    const lineHeight = 5;
+    doc.setFont(tableFontFamily, "normal");
     y += lineHeight + 1;
 
     let rowIndex = 0;
 
     const drawHeader = () => {
-      doc.setFont("helvetica", "bold");
+      doc.setFontSize(tableFontSize);
+      doc.setFont(tableFontFamily, "bold");
       y = headerYStart;
       headers.forEach((h, idx) => {
         doc.text(h, colX[idx], y);
       });
-      doc.setFont("helvetica", "normal");
+      doc.setFont(tableFontFamily, "normal");
       y += lineHeight + 1;
     };
 
@@ -1726,6 +1745,13 @@ class LocalDataSource implements PortfolioDataSource {
         const text = String(val ?? "");
         if (!text) {
           return [""];
+        }
+        // For the type column we always respect manual line breaks
+        // so that values like "STAKING REWARD" or "TRANSFER (OUT)"
+        // can be split across two lines in a controlled way.
+        if (idx === 2) {
+          const parts = text.split("\n");
+          return parts.length > 0 ? parts : [text];
         }
         if (!wrapColumns.has(idx)) {
           return [text];
@@ -1744,7 +1770,7 @@ class LocalDataSource implements PortfolioDataSource {
       // Page break if needed
       if (y + rowHeight > pageHeight - marginBottom) {
         doc.addPage({ orientation: "landscape" });
-        doc.setFontSize(10);
+        doc.setFontSize(tableFontSize);
         drawHeader();
         rowIndex = 0;
       }
