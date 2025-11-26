@@ -1,4 +1,4 @@
-/* Shared domain types for Trakky frontend. */
+/* Shared domain types for Traeky frontend. */
 
 export type Transaction = {
   id: number;

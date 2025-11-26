@@ -13,7 +13,7 @@ import packageJson from "../package.json";
 const RESET_CONFIRMATION_WORD = "DELETE";
 
 const APP_VERSION = packageJson.version;
-const LOCAL_STORAGE_LANG_KEY = "trakky_lang";
+const LOCAL_STORAGE_LANG_KEY = "traeky_lang";
 
 const CLOUD_CONNECT_ENABLED = import.meta.env.DISABLE_CLOUD_CONNECT === "true" ? false : true;
 
@@ -131,6 +131,8 @@ const [lang, setLang] = useState<Language>(() => {
   const [txSearch, setTxSearch] = useState<string>("");
   const [txPage, setTxPage] = useState(1);
   const [txPageSize, setTxPageSize] = useState(25);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isSettingsDirty, setIsSettingsDirty] = useState(false);
   const filteredTransactions = React.useMemo(
     () => {
       const filtered = transactions.filter((tx) => {
@@ -251,6 +253,22 @@ const [lang, setLang] = useState<Language>(() => {
       setCoingeckoApiKeyInput(config.coingecko_api_key ?? "");
     }
   }, [config]);
+
+  useEffect(() => {
+    if (!config) {
+      setIsSettingsDirty(false);
+      return;
+    }
+
+    const baseHolding = String(config.holding_period_days ?? DEFAULT_HOLDING_PERIOD_DAYS);
+    const baseApiKey = config.coingecko_api_key ?? "";
+
+    const holdingDirty =
+      holdingPeriodInput.length > 0 && holdingPeriodInput !== baseHolding;
+    const apiKeyDirty = coingeckoApiKeyInput !== baseApiKey;
+
+    setIsSettingsDirty(holdingDirty || apiKeyDirty);
+  }, [config, holdingPeriodInput, coingeckoApiKeyInput]);
 
 
   const dateTimeFormatter = React.useMemo(
@@ -578,7 +596,7 @@ const handleExportCsv = () => {
   const a = document.createElement("a");
   a.href = url;
   const stamp = new Date().toISOString().slice(0, 10);
-  a.download = `trakky-transactions-${stamp}.csv`;
+  a.download = `traeky-transactions-${stamp}.csv`;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -772,7 +790,7 @@ const handleDownloadEncryptedBackup = async () => {
     const a = document.createElement("a");
     const stamp = new Date().toISOString().slice(0, 10);
     a.href = url;
-    a.download = `trakky-cloud-backup-${stamp}.json`;
+    a.download = `traeky-cloud-backup-${stamp}.json`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -1127,30 +1145,104 @@ const handleRestoreEncryptedBackup = async () => {
 
   return (
     <div className="layout">
-      <aside className="sidebar">
-        <div className="sidebar-header">
-          <div>
-            <h1 className="logo">
-            {t(lang, "app_title")}
-            <span className="logo-version">v{APP_VERSION}</span>
-          </h1>
-          <p className="sidebar-sub">{t(lang, "app_subtitle")}</p>
+      
+
+      
+        {CLOUD_CONNECT_ENABLED && isAuthModalOpen && (
+          <div className="modal-backdrop">
+            <div className="modal">
+              <h2>{t(lang, "login_title")}</h2>
+              <p>{t(lang, "login_description")}</p>
+              <p className="muted">{t(lang, "login_encryption_notice")}</p>
+              <p className="muted">{t(lang, "login_2fa_hint")}</p>
+              <div style={{ marginTop: "1rem" }}>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={loginWithPasskey}
+                >
+                  {t(lang, "login_passkey_cta")}
+                </button>
+              </div>
+              <div style={{ marginTop: "1rem" }}>
+                <label className="form-label">
+                  {t(lang, "login_2fa_label")}
+                  <input
+                    type="text"
+                    className="input"
+                    placeholder={t(lang, "login_2fa_placeholder")}
+                    disabled
+                  />
+                </label>
+              </div>
+              <div style={{ marginTop: "1rem" }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={closeAuthModal}
+                >
+                  {t(lang, "login_close")}
+                </button>
+              </div>
+            </div>
           </div>
-          <div className="lang-switch form-row">
-          <label>{lang === "de" ? "Sprache" : "Language"}</label>
-          <select
-            className="lang-select"
-            value={lang}
-            onChange={(e) => setLang(e.target.value as Language)}
-            aria-label={lang === "de" ? "Sprache auswählen" : "Select language"}
+        )}
+
+      {isSettingsOpen && (
+        <div
+          className="settings-overlay-backdrop"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              setIsSettingsOpen(false);
+            }
+          }}
+        >
+          <div className="settings-overlay" role="dialog" aria-modal="true">
+            <section className="settings-section" id="settings-section">
+
+        <div className="settings-header-row">
+          <div className="settings-header-text">
+            <h2 className="settings-section-title">
+              {lang === "de" ? "Einstellungen" : "Settings"}
+            </h2>
+            <p className="muted">
+              {lang === "de"
+                ? "Verwalte Sprache, Fiat-Währung, CSV-Import und -Export, Haltefrist, Preisabfrage und lokale Daten."
+                : "Manage language, fiat currency, CSV import and export, holding period, price fetching and local data."}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="settings-close-icon"
+            onClick={() => setIsSettingsOpen(false)}
+            aria-label={lang === "de" ? "Einstellungen schließen" : "Close settings"}
           >
-            <option value="en">🇬🇧 English</option>
-            <option value="de">🇩🇪 Deutsch</option>
-          </select>
-        </div>
+            ×
+          </button>
         </div>
 
-        <div className="sidebar-section">
+        <div className="settings-grid">
+<div className="card settings-card">
+<div className="sidebar-section">
+          <h2>{lang === "de" ? "Sprache" : "Language"}</h2>
+          <div className="lang-switch form-row">
+            <select
+              className="lang-select"
+              value={lang}
+              onChange={(e) => setLang(e.target.value as Language)}
+              aria-label={lang === "de" ? "Sprache auswählen" : "Select language"}
+            >
+              <option value="en">🇬🇧 English</option>
+              <option value="de">🇩🇪 Deutsch</option>
+            </select>
+            <p className="muted settings-field-help">
+              {t(lang, "settings_language_info")}
+            </p>
+          </div>
+        </div>
+          </div>
+          <div className="card settings-card">
+<div className="sidebar-section">
           <h2>{t(lang, "base_currency_title")}</h2>
           <div className="form-row">
             <label>{t(lang, "base_currency_label")}</label>
@@ -1184,90 +1276,10 @@ const handleRestoreEncryptedBackup = async () => {
           </div>
         </div>
 
-        <div className="sidebar-section">
-          <h2>{t(lang, "disclaimer_title")}</h2>
-          <p className="muted">
-            {t(lang, "disclaimer_line1")}
-            <br />
-            {t(lang, "disclaimer_line2")}
-          </p>
-        </div>
-
-
-        <div className="sidebar-section">
-          <h2>{t(lang, "csv_title")}</h2>
-          <p className="muted">
-            {t(lang, "csv_expected")}
-            <br />
-            {t(lang, "csv_required")}
-          </p>
-          <p className="muted">
-            {t(lang, "csv_version_info")}
-            <br />
-            {t(lang, "csv_dedup_info")}
-          </p>
-          <div className="form-row file-row" style={{ marginTop: "0.5rem" }}>
-            <label>CSV</label>
-            <div className="file-input-wrapper">
-              <input
-                id="csv-file"
-                type="file"
-                accept=".csv,text/csv"
-                onChange={handleCsvChange}
-                disabled={csvImporting}
-              />
-              <span className="file-name">
-                {csvFileName || t(lang, "csv_no_file")}
-              </span>
-            </div>
-          </div>
-          {csvImporting && (
-            <>
-              <p className="muted">{t(lang, "csv_running")}</p>
-              <progress />
-            </>
-          )}
-          {csvResult && (
-            <div className="csv-result">
-              <p className="muted">
-                {t(lang, "csv_result_prefix")} {csvResult.imported}
-              </p>
-              {csvResult.errors && csvResult.errors.length > 0 && (
-                <div className="csv-errors">
-                  <p className="muted">
-                    {t(lang, "csv_result_errors_title")}
-                  </p>
-                  <ul>
-                    {csvResult.errors.map((err, index) => (
-                      <li key={index}>{err}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          )}
-
-          <div style={{ marginTop: "0.75rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-            <button
-              type="button"
-              className="btn-secondary export-button"
-              onClick={handleExportCsv}
-              disabled={transactions.length === 0}
-            >
-              {t(lang, "csv_export_button")}
-            </button>
-            <button
-              type="button"
-              className="btn-secondary export-button"
-              onClick={handleExportPdf}
-            >
-              {t(lang, "action_export_pdf")}
-            </button>
-          </div>
-        </div>
-
         
-        <div className="sidebar-section">
+          </div>
+          <div className="card settings-card">
+<div className="sidebar-section">
           <h2>{t(lang, "holding_config_title")}</h2>
           <p className="muted">
             {t(lang, "holding_config_description")}
@@ -1290,7 +1302,7 @@ const handleRestoreEncryptedBackup = async () => {
           <p className="muted" style={{ fontSize: "0.75rem", marginTop: "0.25rem" }}>
             {t(lang, "holding_config_hint")}
           </p>
-          <div style={{ marginTop: "0.5rem", display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
+          <div style={{ marginTop: "0.5rem", display: "flex", flexWrap: "wrap", gap: "0.5rem", justifyContent: "center" }}>
             <button
               type="button"
               className="btn-secondary"
@@ -1298,18 +1310,13 @@ const handleRestoreEncryptedBackup = async () => {
             >
               {t(lang, "holding_config_reset_button")}
             </button>
-            <button
-              type="button"
-              className="btn-primary"
-              onClick={handleSaveHoldingConfig}
-              disabled={!holdingPeriodInput.length || !config}
-            >
-              {t(lang, "holding_config_save_button")}
-            </button>
           </div>
         </div>
 
-        <div className="sidebar-section">
+        
+          </div>
+          <div className="card settings-card">
+<div className="sidebar-section">
           <h2>{t(lang, "price_config_section_title")}</h2>
           <p className="muted">
             {t(lang, "price_config_description")}
@@ -1388,102 +1395,91 @@ const handleRestoreEncryptedBackup = async () => {
               </p>
             )}
           </div>
-          <div
-            style={{
-              marginTop: "0.5rem",
-              display: "flex",
-              flexWrap: "wrap",
-              gap: "0.5rem",
-            }}
-          >
-            <button
-              type="button"
-              className="btn-primary"
-              onClick={handleSavePriceSettings}
-              disabled={!config}
-            >
-              {t(lang, "price_config_save_button")}
-            </button>
-          </div>
         </div>
 
+
+          </div>
+          <div className="card settings-card">
 <div className="sidebar-section">
-          <h2>{t(lang, "encryption_section_title")}</h2>
+          <h2>{t(lang, "csv_title")}</h2>
           <p className="muted">
-            {auth.mode === "local-only"
-              ? t(lang, "encryption_local_only")
-              : t(lang, "encryption_cloud_demo")}
+            {t(lang, "csv_expected")}
+            <br />
+            {t(lang, "csv_required")}
           </p>
           <p className="muted">
-            {t(lang, "encryption_key_hint")}
+            {t(lang, "csv_version_info")}
+            <br />
+            {t(lang, "csv_dedup_info")}
           </p>
-        </div>
-        {auth.mode === "cloud" && (
-          <div className="sidebar-section">
-            <h2>{t(lang, "cloud_backup_section_title")}</h2>
-            <p className="muted">{t(lang, "cloud_backup_section_info")}</p>
-            <p className="muted">{t(lang, "cloud_backup_prices_info")}</p>
-            <div className="sidebar-actions-vertical">
+          <div className="form-row file-row" style={{ marginTop: "0.5rem" }}>
+            <div className="file-row-main">
+              <input
+                id="csv-file"
+                type="file"
+                accept=".csv,text/csv"
+                onChange={handleCsvChange}
+                disabled={csvImporting}
+                style={{ display: "none" }}
+              />
               <button
                 type="button"
-                className="btn-secondary"
-                onClick={handleDownloadEncryptedBackup}
+                className="btn-secondary export-button"
+                onClick={() => {
+                  const input = document.getElementById("csv-file") as HTMLInputElement | null;
+                  if (input && !input.disabled) {
+                    input.click();
+                  }
+                }}
               >
-                {t(lang, "cloud_backup_export_button")}
+                {t(lang, "csv_import_button")}
               </button>
               <button
                 type="button"
-                className="btn-secondary"
-                onClick={handleRestoreEncryptedBackup}
+                className="btn-secondary export-button"
+                onClick={handleExportCsv}
+                disabled={transactions.length === 0}
               >
-                {t(lang, "cloud_backup_import_button")}
+                {t(lang, "csv_export_button")}
               </button>
             </div>
-
-                    <p className="muted">
-              {t(lang, "cloud_backup_import_info")}
-            </p>
-            <div className="sidebar-subsection" style={{ marginTop: "1rem" }}>
-              <h3 className="sidebar-subtitle">
-                {t(lang, "cloud_sync_preview_title")}
-              </h3>
+            {csvFileName && (
+              <span className="file-name">{csvFileName}</span>
+            )}
+          </div>
+          {csvImporting && (
+            <>
+              <p className="muted">{t(lang, "csv_running")}</p>
+              <progress />
+            </>
+          )}
+          {csvResult && (
+            <div className="csv-result">
               <p className="muted">
-                {t(lang, "cloud_sync_preview_info")}
+                {t(lang, "csv_result_prefix")} {csvResult.imported}
               </p>
-              <div className="sidebar-actions-vertical">
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={handleCloudSyncPush}
-                  disabled={!cloudClient}
-                >
-                  {t(lang, "cloud_sync_push_button")}
-                </button>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={handleCloudSyncPull}
-                  disabled={!cloudClient}
-                >
-                  {t(lang, "cloud_sync_pull_button")}
-                </button>
-              </div>
-              {!cloudClient && (
-                <p className="muted">
-                  {t(lang, "cloud_sync_client_missing_info")}
-                </p>
+              {csvResult.errors && csvResult.errors.length > 0 && (
+                <div className="csv-errors">
+                  <p className="muted">
+                    {t(lang, "csv_result_errors_title")}
+                  </p>
+                  <ul>
+                    {csvResult.errors.map((err, index) => (
+                      <li key={index}>{err}</li>
+                    ))}
+                  </ul>
+                </div>
               )}
             </div>
-          </div>
-        )}
-        {auth.mode === "local-only" && (
-          <>
-            <div className="sidebar-section">
-              <h2>{t(lang, "local_mode_title")}</h2>
-              <p className="muted">{t(lang, "local_mode_notice")}</p>
-            </div>
+          )}
 
-            <div className="sidebar-section">
+        </div>
+
+        
+        
+          </div>
+          <div className="card settings-card">
+<div className="sidebar-section">
               <h2>{t(lang, "reset_local_title")}</h2>
               <p className="muted">{t(lang, "reset_local_description")}</p>
               {showResetConfirmation ? (
@@ -1528,79 +1524,58 @@ const handleRestoreEncryptedBackup = async () => {
                   </div>
                 </div>
               ) : (
-                <button
-                  type="button"
-                  className="btn-danger"
-                  onClick={() => {
-                    setShowResetConfirmation(true);
-                    setResetConfirmationInput("");
-                  }}
-                >
-                  {t(lang, "reset_local_button_label")}
-                </button>
+                <div className="reset-actions reset-actions-single">
+                  <button
+                    type="button"
+                    className="btn-danger"
+                    onClick={() => {
+                      setShowResetConfirmation(true);
+                      setResetConfirmationInput("");
+                    }}
+                  >
+                    {t(lang, "reset_local_button_label")}
+                  </button>
+                </div>
               )}
             </div>
-          </>
-        )}
 
-<div className="sidebar-footer">
-  <p>
-    <span>{t(lang, "footer_copyright_prefix")} </span>
-    <a
-      href="https://github.com/pandabytelabs/trakky"
-      target="_blank"
-      rel="noreferrer"
-    >
-      {t(lang, "footer_copyright_brand")}
-    </a>
-  </p>
-</div>
-</aside>
+          </div>
+        </div>
 
-      
-        {CLOUD_CONNECT_ENABLED && isAuthModalOpen && (
-          <div className="modal-backdrop">
-            <div className="modal">
-              <h2>{t(lang, "login_title")}</h2>
-              <p>{t(lang, "login_description")}</p>
-              <p className="muted">{t(lang, "login_encryption_notice")}</p>
-              <p className="muted">{t(lang, "login_2fa_hint")}</p>
-              <div style={{ marginTop: "1rem" }}>
+<div className="settings-actions">
                 <button
                   type="button"
                   className="btn-primary"
-                  onClick={loginWithPasskey}
+                  onClick={() => {
+                    if (config) {
+                      handleSaveHoldingConfig();
+                      handleSavePriceSettings();
+                    }
+                    setIsSettingsDirty(false);
+                  }}
+                  disabled={!isSettingsDirty || !config}
                 >
-                  {t(lang, "login_passkey_cta")}
+                  {t(lang, "settings_save_button")}
                 </button>
-              </div>
-              <div style={{ marginTop: "1rem" }}>
-                <label className="form-label">
-                  {t(lang, "login_2fa_label")}
-                  <input
-                    type="text"
-                    className="input"
-                    placeholder={t(lang, "login_2fa_placeholder")}
-                    disabled
-                  />
-                </label>
-              </div>
-              <div style={{ marginTop: "1rem" }}>
                 <button
                   type="button"
                   className="btn-secondary"
-                  onClick={closeAuthModal}
+                  onClick={() => setIsSettingsOpen(false)}
                 >
-                  {t(lang, "login_close")}
+                  {lang === "de" ? "Schließen" : "Close"}
                 </button>
               </div>
-            </div>
+            </section>
           </div>
-        )}
+        </div>
+      )}
 <main className="main">
         <header className="header">
           <div>
-            <h2>{t(lang, "header_portfolio")}</h2>
+            <div className="header-title-row">
+              <h2>Traeky</h2>
+              <span className="version-badge">v{APP_VERSION}</span>
+            </div>
             <p className="header-mode-explainer">
               {auth.isAuthenticated
                 ? t(lang, "header_mode_explainer_cloud")
@@ -1608,18 +1583,23 @@ const handleRestoreEncryptedBackup = async () => {
             </p>
           </div>
           <div className="header-right">
-            <span
-              className="pill pill-small"
-              title={
-                auth.isAuthenticated
-                  ? t(lang, "header_mode_pill_cloud_hint")
-                  : t(lang, "header_mode_pill_local_hint")
-              }
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => {
+                setIsSettingsOpen(true);
+              }}
             >
-              {auth.isAuthenticated
-                ? t(lang, "login_status_cloud")
-                : t(lang, "login_status_local")}
-            </span>
+              {lang === "de" ? "Einstellungen" : "Settings"}
+            </button>
+            {auth.isAuthenticated && (
+              <span
+                className="pill pill-small"
+                title={t(lang, "header_mode_pill_cloud_hint")}
+              >
+                {t(lang, "login_status_cloud")}
+              </span>
+            )}
             {auth.isAuthenticated ? (
               <button
                 type="button"
@@ -1791,8 +1771,18 @@ const handleRestoreEncryptedBackup = async () => {
             )}
         </section>
 <section className="card">
-          <h3>{t(lang, "table_tx_title")}</h3>
-<div className="tx-filters">
+          <div className="card-header-row">
+            <h3>{t(lang, "table_tx_title")}</h3>
+            <button
+              type="button"
+              className="btn-secondary export-button"
+              onClick={handleExportPdf}
+              disabled={filteredTransactions.length === 0}
+            >
+              {t(lang, "action_export_pdf")}
+            </button>
+          </div>
+          <div className="tx-filters">
           <div className="tx-filter-group form-row">
             <label>{t(lang, "tx_filter_year_label")}</label>
             <select
@@ -2526,7 +2516,54 @@ const handleRestoreEncryptedBackup = async () => {
           </div>
         </div>
       )}
-</main>
+
+      </main>
+      <footer className="app-footer">
+        <div className="app-footer-content">
+          <div className="app-footer-section">
+            <h4>{t(lang, "disclaimer_title")}</h4>
+            <p className="muted">
+              {t(lang, "disclaimer_line1")}
+              <br />
+              {t(lang, "disclaimer_line2")}
+            </p>
+          </div>
+          <div className="app-footer-section">
+            <h4>{lang === "de" ? "Datenschutz & Verschlüsselung" : "Privacy & Encryption"}</h4>
+            <p className="muted">
+              {auth.mode === "local-only"
+                ? t(lang, "encryption_local_only")
+                : t(lang, "encryption_cloud_demo")}
+            </p>
+            <p className="muted">
+              {t(lang, "encryption_key_hint")}
+            </p>
+            <p className="muted">
+              {t(lang, "local_mode_notice")}
+            </p>
+          </div>
+        </div>
+      </footer>
+      <div className="app-footer-bottom">
+        <p>
+          <a
+            href="https://github.com/pandabytelabs/traeky"
+            target="_blank"
+            rel="noreferrer"
+          >
+            {t(lang, "footer_copyright_brand")}
+          </a>
+          <span> {t(lang, "footer_madewith")} </span>
+          <a
+            href="https://pandabyte.net"
+            target="_blank"
+            rel="noreferrer"
+          >
+            PANDABYTE
+          </a>
+        </p>
+      </div>
+
     </div>
   );
 };
