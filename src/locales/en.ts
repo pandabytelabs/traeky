@@ -43,9 +43,8 @@ export const en: Record<string, string> = {
   disclaimer_title: "Disclaimer",
   disclaimer_line1: "Traeky does not provide tax or legal advice.",
   disclaimer_line2: "Please consult a tax advisor before making decisions.",
-
   csv_title: "CSV import & export",
-  csv_version_info: "Exported CSV files include a schema version (currently v2) so that future Traeky versions can perform migrations. Older CSVs without the version column are still supported.",
+  csv_version_info: "Exported CSV files include a schema version (currently v2) so that future Traeky versions can perform migrations.",
   encryption_cloud_demo: "When connected to the Traeky Cloud, your data is sent end-to-end encrypted. Encryption happens only on your device.",
   encryption_key_hint: "Make sure you store your password and recovery information safely. Without the key, nobody \u2013 not even the operator \u2013 can restore your data.",
   encryption_local_only: "In local-only mode, your data is stored only in this browser. Cloud sync is disabled.",

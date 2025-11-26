@@ -44,7 +44,7 @@ export const de: Record<string, string> = {
   disclaimer_line1: "Traeky ersetzt keine steuerliche oder rechtliche Beratung.",
   disclaimer_line2: "Bitte wende dich an eine Steuerberatung, bevor du Entscheidungen triffst.",
   csv_title: "CSV-Import & -Export",
-  csv_version_info: "Exportierte CSVs enthalten eine Schema-Version (aktuell v2), damit künftige Traeky-Versionen Migrationen durchführen können. Ältere CSVs ohne Versionsspalte werden weiterhin unterstützt.",
+  csv_version_info: "Exportierte CSVs enthalten eine Schema-Version (aktuell v2), damit künftige Traeky-Versionen Migrationen durchführen können.",
   encryption_cloud_demo: "Bei Verbindung mit der Traeky-Cloud werden deine Daten Ende-zu-Ende verschl\u00fcsselt \u00fcbertragen. Die Verschl\u00fcsselung findet ausschlie\u00dflich auf deinem Ger\u00e4t statt.",
   encryption_key_hint: "Bewahre dein Passwort und deine Wiederherstellungsinformationen sicher auf. Ohne Schl\u00fcssel kann niemand \u2013 auch nicht der Betreiber \u2013 deine Daten wiederherstellen.",
   encryption_local_only: "Im lokalen Modus werden deine Daten nur in diesem Browser gespeichert. Cloud-Sync ist deaktiviert.",
