@@ -66,16 +66,31 @@ docker run --rm   -p 5173:5173   --name traeky-testing   pandabytelabs/traeky:te
 
 ### Environment variables
 
-The app supports configuration via environment variables. One example is:
+The app supports configuration via environment variables. The most relevant ones are:
 
-- `DISABLE_CLOUD_CONNECT`
+- `TRAEKY_DISABLE_CLOUD_CONNECT` (legacy alias: `DISABLE_CLOUD_CONNECT`)
   - `true` → disables cloud connect features in the standalone build
   - `false` or unset → cloud connect may be enabled (depending on your backend configuration)
+
+- `TRAEKY_PROFILE_PIN_SALT`
+  - Optional cryptographic salt used when hashing the profile PIN
+  - For best security, set this to a long, random value and keep it stable once profiles exist
+
+- `TRAEKY_ALLOWED_HOSTS`
+  - Controls which host names are allowed to access the dev server
+  - Examples:
+    - `TRAEKY_ALLOWED_HOSTS=example.com`
+    - `TRAEKY_ALLOWED_HOSTS=example.net,example.com`
+    - `TRAEKY_ALLOWED_HOSTS=all` (or `true` / `*`) to allow all hosts
 
 Example with cloud connect disabled:
 
 ```bash
-docker run --rm   -p 5173:5173   -e DISABLE_CLOUD_CONNECT=true   --name traeky   pandabytelabs/traeky:latest
+docker run --rm \
+  -p 5173:5173 \
+  -e TRAEKY_DISABLE_CLOUD_CONNECT=true \
+  --name traeky \
+  pandabytelabs/traeky:latest
 ```
 
 ---
