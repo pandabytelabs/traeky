@@ -45,6 +45,24 @@ const PROFILE_DATA_SUFFIX = ":data";
 const LEGACY_TRANSACTIONS_KEY = "traeky:transactions";
 const LEGACY_NEXT_ID_KEY = "traeky:next-tx-id";
 const LEGACY_CONFIG_KEY = "traeky:app-config";
+const PROFILE_PIN_INDEX_KEY = "traeky:profiles-pin-index";
+
+type ProfilePinIndex = {
+  [profileId: string]: string;
+};
+
+function readProfilePinIndex(): ProfilePinIndex {
+  const value = readJson<ProfilePinIndex | null>(PROFILE_PIN_INDEX_KEY);
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  return value;
+}
+
+function writeProfilePinIndex(index: ProfilePinIndex): void {
+  writeJson(PROFILE_PIN_INDEX_KEY, index);
+}
+
 
 let activeProfile: ActiveProfileSession | null = null;
 
@@ -228,10 +246,10 @@ export function getActiveProfileSummary(): ProfileSummary | null {
 export function hasActiveProfileSession(): boolean {
   return !!activeProfile;
 }
-
 export function logoutActiveProfileSession(): void {
   activeProfile = null;
 }
+
 
 function assertActiveProfile(): asserts activeProfile is ActiveProfileSession {
   if (!activeProfile) {
@@ -306,6 +324,10 @@ export async function createInitialProfile(name: string, pin: string): Promise<P
     profiles,
   });
 
+  const pinIndex = readProfilePinIndex();
+  pinIndex[id] = pinHash;
+  writeProfilePinIndex(pinIndex);
+
   await persistActiveProfile();
 
   return meta;
@@ -313,25 +335,33 @@ export async function createInitialProfile(name: string, pin: string): Promise<P
 
 export async function loginProfile(profileId: ProfileId, pin: string): Promise<ProfileSummary> {
   const index = readProfilesIndex();
-  const meta = index.profiles.find((p) => p.id === profileId);
-  if (!meta) {
+  if (index.profiles.length === 0) {
     throw new Error("Profile not found");
   }
 
+  const pinIndex = readProfilePinIndex();
   const pinHash = await hashPin(pin);
-  const key = buildProfileDataKey(profileId);
+
+  // 1) Try selected profile with matching PIN hash
+  let meta: ProfileSummary | null =
+    index.profiles.find((p) => p.id === profileId && pinIndex[p.id] === pinHash) ?? null;
+
+  // 2) Fallback: search any profile with this PIN hash
+  if (!meta) {
+    meta = index.profiles.find((p) => pinIndex[p.id] === pinHash) ?? null;
+  }
+
+  if (!meta) {
+    throw new Error("Invalid PIN");
+  }
+
+  const key = buildProfileDataKey(meta.id);
   const encrypted = readJson<EncryptedPayload>(key);
   if (!encrypted) {
     throw new Error("Profile data not found");
   }
 
-  let data: ProfileDataPayload;
-  try {
-    data = await decryptProfilePayload<ProfileDataPayload>(pinHash, encrypted);
-  } catch {
-    throw new Error("Invalid PIN");
-  }
-
+  const data = await decryptProfilePayload<ProfileDataPayload>(pinHash, encrypted);
   if (!data || data.version !== 1) {
     throw new Error("Unsupported profile data version");
   }
@@ -344,7 +374,7 @@ export async function loginProfile(profileId: ProfileId, pin: string): Promise<P
 
   const now = nowIso();
   const updatedMeta: ProfileSummary = { ...meta, updatedAt: now };
-  const updatedProfiles = index.profiles.map((p) => (p.id === meta.id ? updatedMeta : p));
+  const updatedProfiles = index.profiles.map((p) => (p.id === meta!.id ? updatedMeta : p));
   writeProfilesIndex({
     currentProfileId: meta.id,
     profiles: updatedProfiles,
@@ -353,6 +383,7 @@ export async function loginProfile(profileId: ProfileId, pin: string): Promise<P
 
   return updatedMeta;
 }
+
 
 export function getActiveProfileConfig(): AppConfig {
   assertActiveProfile();
@@ -416,6 +447,10 @@ export async function createAdditionalProfile(
     profiles,
   });
 
+  const pinIndex = readProfilePinIndex();
+  pinIndex[id] = pinHash;
+  writeProfilePinIndex(pinIndex);
+
   activeProfile = {
     meta,
     pinHash,
@@ -461,6 +496,11 @@ export async function changeActiveProfilePin(
   }
   const newHash = await hashPin(newPin);
   activeProfile.pinHash = newHash;
+
+  const pinIndex = readProfilePinIndex();
+  pinIndex[activeProfile.meta.id] = newHash;
+  writeProfilePinIndex(pinIndex);
+
   void persistActiveProfile();
 }
 

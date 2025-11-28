@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createPortfolioDataSource, type PortfolioDataSource, computeLocalHoldings, computeLocalExpiring, loadLocalTransactions, saveLocalAppConfig } from "./data/dataSource";
 import { useAuth } from "./auth/AuthContext";
 import {
@@ -149,6 +149,7 @@ const App: React.FC = () => {
   const [pinChangeNewPinConfirmInput, setPinChangeNewPinConfirmInput] = useState("");
   const [pinChangeError, setPinChangeError] = useState<string | null>(null);
 
+  const profileDropdownRef = useRef<HTMLDivElement | null>(null);
   const [isProfileMenuOverlayOpen, setIsProfileMenuOverlayOpen] = useState(false);
 
   const [showProfileDeleteConfirmation, setShowProfileDeleteConfirmation] = useState(false);
@@ -285,6 +286,27 @@ useEffect(() => {
     }
   }, [lang]);
 
+
+  useEffect(() => {
+    function handleGlobalPointerDown(event: MouseEvent | TouchEvent) {
+      if (!profileDropdownRef.current) return;
+      const target = event.target as Node | null;
+      if (target && profileDropdownRef.current.contains(target)) {
+        return;
+      }
+      setIsProfileMenuOverlayOpen(false);
+    }
+
+    if (isProfileMenuOverlayOpen) {
+      document.addEventListener("mousedown", handleGlobalPointerDown);
+      document.addEventListener("touchstart", handleGlobalPointerDown);
+    }
+
+    return () => {
+      document.removeEventListener("mousedown", handleGlobalPointerDown);
+      document.removeEventListener("touchstart", handleGlobalPointerDown);
+    };
+  }, [isProfileMenuOverlayOpen]);
   const [csvResult, setCsvResult] = useState<CsvImportResult | null>(null);
   const [csvFileName, setCsvFileName] = useState<string | null>(null);
   const [showResetConfirmation, setShowResetConfirmation] = useState(false);
@@ -2135,21 +2157,106 @@ const handleRestoreEncryptedBackup = async () => {
             ) : null}
             <button
               type="button"
-              className="btn-secondary"
+              className="icon-circle-button"
               onClick={() => {
                 setIsSettingsOpen(true);
+                setIsProfileMenuOverlayOpen(false);
               }}
+              aria-label={t(lang, "header_settings_button")}
             >
-              {lang === "de" ? "Einstellungen" : "Settings"}
+              <span aria-hidden="true">⚙</span>
             </button>
+            <div className="profile-dropdown" ref={profileDropdownRef}>
+              <button
+                type="button"
+                className="icon-circle-button"
+                onClick={() => {
+                  setIsProfileMenuOverlayOpen((open) => !open);
+                }}
+                aria-label={t(lang, "header_profile_button")}
+              >
+                <span aria-hidden="true" className="icon-user" />
+              </button>
+              {isProfileMenuOverlayOpen && activeProfile && (
+                <div className="profile-dropdown-menu">
+                  <button
+                    type="button"
+                    className="dropdown-item"
+                    onClick={() => {
+                      setRenameProfileNameInput(activeProfile.name);
+                      setRenameProfileError(null);
+                      setIsRenameProfileOverlayOpen(true);
+                      setIsProfileMenuOverlayOpen(false);
+                    }}
+                  >
+                    {t(lang, "profile_menu_rename")}
+                  </button>
+                  <button
+                    type="button"
+                    className="dropdown-item"
+                    onClick={() => {
+                      setPinChangeCurrentPinInput("");
+                      setPinChangeNewPinInput("");
+                      setPinChangeNewPinConfirmInput("");
+                      setPinChangeError(null);
+                      setIsPinChangeOverlayOpen(true);
+                      setIsProfileMenuOverlayOpen(false);
+                    }}
+                  >
+                    {t(lang, "profile_menu_change_pin")}
+                  </button>
+                  <button
+                    type="button"
+                    className="dropdown-item"
+                    onClick={() => {
+                      setCreateProfileNameInput("");
+                      setCreateProfilePinInput("");
+                      setCreateProfilePinConfirmInput("");
+                      setCreateProfileError(null);
+                      setIsCreateProfileOverlayOpen(true);
+                      setIsProfileMenuOverlayOpen(false);
+                    }}
+                  >
+                    {t(lang, "profile_menu_add_profile")}
+                  </button>
+                </div>
+              )}
+            </div>
             <button
               type="button"
-              className="btn-secondary"
+              className="icon-circle-button"
               onClick={() => {
-                setIsProfileMenuOverlayOpen(true);
+                if (!activeProfile) return;
+                logoutActiveProfileSession();
+                setActiveProfile(null);
+                setProfileOverview(null);
+                setHoldings([]);
+                setHoldingsPortfolioEur(null);
+                setHoldingsPortfolioUsd(null);
+                setFxRateEurUsd(null);
+                setTransactions([]);
+                setExpiring([]);
+                setError(null);
+                setTxFilterYear("");
+                setTxFilterAsset("");
+                setTxFilterType("");
+                setTxSearch("");
+                setIsProfileMenuOverlayOpen(false);
+                const overview = getProfileOverview();
+                setProfileOverview(overview);
+                if (overview.profiles.length > 0) {
+                  setLoginProfileId(overview.profiles[0].id);
+                } else {
+                  setLoginProfileId("");
+                }
+                setLoginPinInput("");
+                setLoginError(null);
+                setIsProfileLoginOverlayOpen(true);
               }}
+              aria-label={t(lang, "profile_menu_logout")}
+              disabled={!activeProfile}
             >
-              {lang === "de" ? "Profil" : "Profile"}
+              <span aria-hidden="true">⏻</span>
             </button>
           </div>
 
@@ -3054,7 +3161,7 @@ const handleRestoreEncryptedBackup = async () => {
 
 
 
-      {isProfileMenuOverlayOpen && (
+      {false && isProfileMenuOverlayOpen && (
         <div className="modal-backdrop">
           <div className="modal">
             <div className="modal-header">
@@ -3093,17 +3200,6 @@ const handleRestoreEncryptedBackup = async () => {
             </div>
             {activeProfile && (
               <div className="profile-menu-actions">
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={() => {
-                    logoutActiveProfileSession();
-                    setActiveProfile(null);
-                    setIsProfileMenuOverlayOpen(false);
-                  }}
-                >
-                  {lang === "de" ? "Abmelden" : "Log out"}
-                </button>
                 <button
                   type="button"
                   className="btn-secondary"
