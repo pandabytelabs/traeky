@@ -24,7 +24,7 @@ const SYMBOL_TO_COINGECKO_ID: Record<string, string> = {
   DOT: "polkadot",
   MATIC: "matic-network",
   DOGE: "dogecoin",
-  USDC: "usdc",
+  USDC: "usd-coin",
 };
 
 type SupportedFiat = "EUR" | "USD";
