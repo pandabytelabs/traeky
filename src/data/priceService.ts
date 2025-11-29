@@ -13,6 +13,7 @@ import type { HoldingsResponse } from "../domain/types";
 const COINGECKO_API = "https://api.coingecko.com/api/v3/simple/price";
 
 const SYMBOL_TO_COINGECKO_ID: Record<string, string> = {
+  IOTA: "iota"
   BTC: "bitcoin",
   ETH: "ethereum",
   SOL: "solana",
@@ -23,6 +24,7 @@ const SYMBOL_TO_COINGECKO_ID: Record<string, string> = {
   DOT: "polkadot",
   MATIC: "matic-network",
   DOGE: "dogecoin",
+  USDC: "usdc"
 };
 
 type SupportedFiat = "EUR" | "USD";
