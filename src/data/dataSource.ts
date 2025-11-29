@@ -633,7 +633,16 @@ async function enrichTransactionsWithBaseFiat(
       continue;
     }
 
-    let hist: { eur: number | null; usd: number | null } | null = null;
+        const hasFiatCurrency =
+      typeof tx.fiat_currency === "string" &&
+      tx.fiat_currency.trim().length > 0;
+
+    if (!hasFiatCurrency) {
+      enriched.push(tx);
+      continue;
+    }
+
+let hist: { eur: number | null; usd: number | null } | null = null;
     try {
       hist = await fetchHistoricalPriceForSymbol(symbol, baseCurrency, tx.timestamp);
     } catch (err) {

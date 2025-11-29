@@ -214,6 +214,7 @@ export const en: Record<string, string> = {
   profile_name_placeholder: "e.g. Personal, Taxes, Family",
   profile_pin_label: "PIN",
   profile_pin_confirm_label: "Repeat PIN",
+  profile_pin_hint: "At least 8 characters.",
   profile_setup_submit: "Create profile and start",
   profile_login_title: "Choose profile",
   profile_login_description: "Select a profile and enter the PIN to unlock your data.",
