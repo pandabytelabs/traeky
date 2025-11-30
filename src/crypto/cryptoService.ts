@@ -111,7 +111,7 @@ export async function encryptJsonWithPassphrase<T>(payload: T, passphrase: strin
   const ciphertextBuf = await crypto.subtle.encrypt(
     {
       name: AES_ALGO,
-      iv,
+      iv: iv as unknown as BufferSource,
     },
     key,
     plaintext as unknown as BufferSource,
@@ -142,7 +142,7 @@ export async function decryptJsonWithPassphrase<T>(encrypted: EncryptedPayload, 
   const plaintextBuf = await crypto.subtle.decrypt(
     {
       name: AES_ALGO,
-      iv,
+      iv: iv as unknown as BufferSource,
     },
     key,
     ciphertext as unknown as BufferSource,
