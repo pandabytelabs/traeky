@@ -2772,7 +2772,7 @@ const handleReloadHoldingPrices = async () => {
                     {t(lang, "profile_active_label")}
                   </p>
                   <p style={{ fontWeight: 600, marginTop: "0.25rem" }}>
-                    {activeProfile.name}
+                    {activeProfile!.name}
                   </p>
                 </>
               ) : (

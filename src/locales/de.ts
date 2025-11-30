@@ -187,7 +187,6 @@ export const de: Record<string, string> = {
   profile_pin_confirm_label: "PIN wiederholen",
   profile_setup_submit: "Profil erstellen und starten",
   profile_login_title: "Profil auswählen",
-  login_status_local: "Lokaler Modus",
   profile_login_description: "Wähle ein Profil und gib die zugehörige PIN ein, um deine Daten zu entsperren.",
   profile_login_select_label: "Profil",
   profile_login_pin_label: "PIN",
@@ -201,7 +200,6 @@ export const de: Record<string, string> = {
   profile_error_setup_failed: "Das Profil konnte nicht erstellt werden. Bitte versuche es erneut.",
   profile_error_select_profile: "Bitte wähle ein Profil aus.",
   profile_error_invalid_pin: "PIN ist ungültig.",
-
   locale_code: "de-DE",
   pin_error_required: "Bitte gib eine PIN ein.",
   pin_error_mismatch: "Die PINs stimmen nicht überein.",
