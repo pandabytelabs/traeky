@@ -17,11 +17,9 @@ import { getActiveProfileConfig, setActiveProfileConfig, getActiveProfileTransac
 
 
 // Lazily loaded XLSX module so that it is only pulled in when needed.
-type XlsxModule = typeof import("../vendor/sheetjs/xlsx.mjs");
+let xlsxModulePromise: Promise<any> | null = null;
 
-let xlsxModulePromise: Promise<XlsxModule> | null = null;
-
-async function getXlsxModule(): Promise<XlsxModule> {
+async function getXlsxModule(): Promise<any> {
   if (!xlsxModulePromise) {
     // Use locally vendored SheetJS CE 0.19.3 to avoid vulnerable npm xlsx.
     // @ts-expect-error - vendored SheetJS module without full TypeScript types
