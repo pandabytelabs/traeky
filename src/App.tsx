@@ -17,7 +17,6 @@ import {
   logoutActiveProfileSession,
 } from "./auth/profileStore";
 import { t, Language, getDefaultLanguage } from "./i18n";
-import { createPortfolioSnapshot, encryptSnapshotForCloud, decryptSnapshotFromCloud } from "./data/cloudSync";
 import { CURRENT_CSV_SCHEMA_VERSION, CSV_SCHEMA_VERSION_COLUMN } from "./data/csvSchema";
 import { Transaction, HoldingsItem, HoldingsResponse, CsvImportResult, AppConfig, ExpiringHolding } from "./domain/types";
 import { DEFAULT_HOLDING_PERIOD_DAYS, DEFAULT_UPCOMING_WINDOW_DAYS } from "./domain/config";
@@ -110,7 +109,7 @@ function holdingPeriodEndDate(tx: Transaction, holdingDays: number): Date | null
 }
 
 const App: React.FC = () => {
-  const { auth, openAuthModal, logout, isAuthModalOpen, loginWithPasskey, closeAuthModal } = useAuth();
+  const { auth, openAuthModal, logout, isAuthModalOpen, closeAuthModal } = useAuth();
   const dataSource: PortfolioDataSource = React.useMemo(
     () => createPortfolioDataSource(auth.mode),
     [auth.mode]
@@ -1074,187 +1073,6 @@ const handleReloadHoldingPrices = async () => {
   }
 };
 
-const handleDownloadEncryptedBackup = async () => {
-  try {
-    if (!config) {
-      alert(t(lang, "backup_error_no_config"));
-      return;
-    }
-    if (!transactions || transactions.length === 0) {
-      alert(t(lang, "backup_error_no_transactions"));
-      return;
-    }
-
-    const passphrase = window.prompt(t(lang, "backup_prompt_passphrase"));
-    if (!passphrase) {
-      return;
-    }
-
-    const assetPrices = getPriceCacheSnapshot();
-    const snapshot = createPortfolioSnapshot(config, transactions, assetPrices);
-    const encrypted = await encryptSnapshotForCloud(snapshot, passphrase);
-
-    const blob = new Blob([JSON.stringify(encrypted, null, 2)], {
-      type: "application/json;charset=utf-8",
-    });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    const stamp = new Date().toISOString().slice(0, 10);
-    a.href = url;
-    a.download = `traeky-cloud-backup-${stamp}.json`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    window.URL.revokeObjectURL(url);
-  } catch (err) {
-    console.error("Failed to create encrypted backup", err);
-    alert(t(lang, "backup_error_failed"));
-  }
-};
-const handleRestoreEncryptedBackup = async () => {
-  try {
-    const fileInput = document.createElement("input");
-    fileInput.type = "file";
-    fileInput.accept = "application/json,.json";
-
-    fileInput.onchange = async () => {
-      const file = fileInput.files && fileInput.files[0];
-      if (!file) {
-        return;
-      }
-
-      try {
-        const text = await file.text();
-        const payload = JSON.parse(text);
-
-        const passphrase = window.prompt(t(lang, "backup_prompt_passphrase"));
-        if (!passphrase) {
-          return;
-        }
-
-        const snapshot = await decryptSnapshotFromCloud(payload, passphrase);
-
-    // If the snapshot contains historical asset prices, hydrate the local
-    // price cache so that we can reuse these prices without additional
-    // external API calls.
-    if (snapshot.assetPrices && Object.keys(snapshot.assetPrices).length > 0) {
-      hydratePriceCache(snapshot.assetPrices);
-    }
-
-        if (!snapshot || typeof snapshot !== "object" || !Array.isArray(snapshot.transactions)) {
-          alert(t(lang, "backup_error_invalid_file"));
-          return;
-        }
-
-        const rawConfig = snapshot.config ?? {};
-        const safeConfig: AppConfig = {
-          holding_period_days:
-            typeof rawConfig.holding_period_days === "number" &&
-            Number.isFinite(rawConfig.holding_period_days) &&
-            rawConfig.holding_period_days >= 0
-              ? rawConfig.holding_period_days
-              : DEFAULT_HOLDING_PERIOD_DAYS,
-          upcoming_holding_window_days:
-            typeof rawConfig.upcoming_holding_window_days === "number" &&
-            Number.isFinite(rawConfig.upcoming_holding_window_days) &&
-            rawConfig.upcoming_holding_window_days > 0
-              ? rawConfig.upcoming_holding_window_days
-              : DEFAULT_UPCOMING_WINDOW_DAYS,
-          base_currency:
-            typeof rawConfig.base_currency === "string" &&
-            (rawConfig.base_currency === "EUR" || rawConfig.base_currency === "USD")
-              ? rawConfig.base_currency
-              : "EUR",
-        };
-
-        const normalized: Transaction[] = snapshot.transactions
-          .map((tx, index) => {
-            const amount = Number((tx as Transaction).amount ?? 0);
-            const ts = (tx as Transaction).timestamp;
-            if (!ts || !Number.isFinite(amount) || amount === 0) {
-              return null;
-            }
-            const id =
-              typeof (tx as Transaction).id === "number" &&
-              Number.isFinite((tx as Transaction).id) &&
-              (tx as Transaction).id > 0
-                ? (tx as Transaction).id
-                : index + 1;
-
-            return {
-              id,
-              asset_symbol: (tx as Transaction).asset_symbol || "UNKNOWN",
-              tx_type: (tx as Transaction).tx_type || "BUY",
-              amount,
-              price_fiat:
-                (tx as Transaction).price_fiat !== undefined
-                  ? (tx as Transaction).price_fiat
-                  : null,
-              fiat_currency: (tx as Transaction).fiat_currency || "EUR",
-              timestamp: ts,
-              source:
-                (tx as Transaction).source !== undefined
-                  ? (tx as Transaction).source
-                  : null,
-              note:
-                (tx as Transaction).note !== undefined ? (tx as Transaction).note : null,
-              tx_id:
-                (tx as Transaction).tx_id !== undefined ? (tx as Transaction).tx_id : null,
-              fiat_value:
-                (tx as Transaction).fiat_value !== undefined
-                  ? (tx as Transaction).fiat_value
-                  : null,
-              value_eur:
-                (tx as Transaction).value_eur !== undefined
-                  ? (tx as Transaction).value_eur
-                  : null,
-              value_usd:
-                (tx as Transaction).value_usd !== undefined
-                  ? (tx as Transaction).value_usd
-                  : null,
-            };
-          })
-          .filter((tx): tx is Transaction => tx !== null);
-
-        if (!normalized.length) {
-          alert(t(lang, "backup_error_no_transactions"));
-          return;
-        }
-
-        let holdings = computeLocalHoldings(normalized);
-        try {
-          holdings = await applyPricesToHoldings(holdings);
-        } catch (priceErr) {
-          console.warn("Failed to enrich holdings with prices for restored backup", priceErr);
-        }
-
-        const expiring = computeLocalExpiring(normalized, safeConfig);
-
-        // Persist restored transactions to local storage so that the data
-        // survives a page reload even before any cloud backend exists.
-        overwriteLocalTransactions(normalized);
-
-        setConfig(safeConfig);
-        setTransactions(normalized);
-        setHoldings(holdings.items ?? []);
-        setHoldingsPortfolioEur(holdings.portfolio_value_eur ?? null);
-        setHoldingsPortfolioUsd(holdings.portfolio_value_usd ?? null);
-        setFxRateEurUsd(holdings.fx_rate_eur_usd ?? null);
-        setExpiring(expiring);
-        setError(null);
-      } catch (err) {
-        console.error("Failed to restore encrypted backup", err);
-        alert(t(lang, "backup_error_decrypt_failed"));
-      } finally {
-        fileInput.value = "";
-      }
-    };
-
-    fileInput.click();
-  } catch (err) {
-    console.error("Failed to open encrypted backup file picker", err);
-  }
-};
 
 
 
@@ -1437,27 +1255,6 @@ const handleRestoreEncryptedBackup = async () => {
               <h2>{t(lang, "login_title")}</h2>
               <p>{t(lang, "login_description")}</p>
               <p className="muted">{t(lang, "login_encryption_notice")}</p>
-              <p className="muted">{t(lang, "login_2fa_hint")}</p>
-              <div style={{ marginTop: "1rem" }}>
-                <button
-                  type="button"
-                  className="btn-primary"
-                  onClick={loginWithPasskey}
-                >
-                  {t(lang, "login_passkey_cta")}
-                </button>
-              </div>
-              <div style={{ marginTop: "1rem" }}>
-                <label className="form-label">
-                  {t(lang, "login_2fa_label")}
-                  <input
-                    type="text"
-                    className="input"
-                    placeholder={t(lang, "login_2fa_placeholder")}
-                    disabled
-                  />
-                </label>
-              </div>
               <div style={{ marginTop: "1rem" }}>
                 <button
                   type="button"

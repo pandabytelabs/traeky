@@ -1,5 +1,5 @@
 /**
- * Frontend-only encryption helpers for preparing zero-knowledge online sync.
+ * Frontend-only encryption helpers for local encrypted data (no sync).
  *
  * IMPORTANT:
  * - This module is intentionally self-contained and does not talk to any

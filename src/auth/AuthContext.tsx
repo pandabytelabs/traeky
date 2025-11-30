@@ -44,34 +44,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const [isAuthModalOpen, setAuthModalOpen] = useState(false);
 
-
-  const loginWithPasskey = async () => {
-    // TODO: Implement real WebAuthn + backend challenge/verification.
-    // For now we just simulate a successful login and prepare a cloud client
-    // instance that the rest of the app can use once a backend is available.
-    setAuth((prev) => ({
-      ...prev,
-      isAuthenticated: true,
-      mode: "local-only",
-      userLabel: "Local user",
-    }));
-    setAuthModalOpen(false);
-  };
-
-  const logout = () => {
-    setAuth({
-      isAuthenticated: false,
-      mode: "local-only",
-      userLabel: null,
-    });
-  };
-
   const openAuthModal = () => setAuthModalOpen(true);
   const closeAuthModal = () => setAuthModalOpen(false);
 
   const value: AuthContextValue = {
     auth,
-    loginWithPasskey,
     logout,
     openAuthModal,
     closeAuthModal,
