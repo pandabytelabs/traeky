@@ -1,4 +1,5 @@
 import type { HoldingsResponse } from "../domain/types";
+import { getCoingeckoIdForSymbol } from "../domain/assets";
 
 /**
  * Simple client-side price service using a public API (e.g. CoinGecko).
@@ -12,20 +13,6 @@ import type { HoldingsResponse } from "../domain/types";
 
 const COINGECKO_API = "https://api.coingecko.com/api/v3/simple/price";
 
-const SYMBOL_TO_COINGECKO_ID: Record<string, string> = {
-  IOTA: "iota",
-  BTC: "bitcoin",
-  ETH: "ethereum",
-  SOL: "solana",
-  ADA: "cardano",
-  BNB: "binancecoin",
-  XRP: "ripple",
-  AVAX: "avalanche-2",
-  DOT: "polkadot",
-  MATIC: "matic-network",
-  DOGE: "dogecoin",
-  USDC: "usd-coin",
-};
 
 type SupportedFiat = "EUR" | "USD";
 
@@ -118,12 +105,15 @@ function getCachedQuote(sym: string): { eur?: number; usd?: number } | null {
 }
 
 function mapSymbolToId(symbol: string): string | null {
-  const upper = symbol.toUpperCase();
-  if (SYMBOL_TO_COINGECKO_ID[upper]) {
-    return SYMBOL_TO_COINGECKO_ID[upper];
+  if (!symbol) {
+    return null;
+  }
+  const fromMetadata = getCoingeckoIdForSymbol(symbol);
+  if (fromMetadata) {
+    return fromMetadata;
   }
   // Heuristic fallback: try lowercase symbol as ID
-  return symbol ? symbol.toLowerCase() : null;
+  return symbol.toLowerCase();
 }
 
 
