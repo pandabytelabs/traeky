@@ -1,11 +1,11 @@
 # Traeky
 
-> Self-hosted crypto portfolio & tax overview.
+![Version](https://img.shields.io/github/package-json/v/pandabytelabs/traeky?label=version)
+
+> Local (and self-hosted) crypto portfolio.
 
 Traeky is a privacy-friendly, self-hostable web app to track your crypto portfolio and generate a basic report.
-The UI runs entirely in your browser, data is stored locally, and encrypted backups can be created for safekeeping.
-
-> online features / "Traeky" integration is optional. In the standalone build described here, no portfolio data is sent to any third-party service unless you explicitly configure it.
+The UI runs entirely in your browser, data is stored locally.
 
 ---
 
@@ -15,15 +15,14 @@ The UI runs entirely in your browser, data is stored locally, and encrypted back
 - Portfolio and gain/loss overview
 - Export a PDF report
 - CSV import & export (Traeky-specific schema)
-- End-to-end encrypted backups
-- Local-first: everything runs in the browser, no external API required for basic usage
+- Local-first: everything runs in the browser, no external API required (except coingecko price fetching) for basic usage
 - English and German translations
 
 ---
 
 ## Project status
 
-Traeky is currently in an early version (`0.0.1`).
+Traeky is currently in an early version (see version badge above).
 APIs, data schema and UI are subject to change between releases.
 
 ---
@@ -35,12 +34,14 @@ Docker images are published to Docker Hub:
 - `pandabytelabs/traeky:latest` – latest stable release from `main`
 - `pandabytelabs/traeky:stable` – alias for the latest stable release
 - `pandabytelabs/traeky:testing` – pre-release builds from `develop`
-- `pandabytelabs/traeky:<version>` – versioned images (e.g. `0.0.1`)
+- `pandabytelabs/traeky:nightly` – nightly builds from `develop`
+- `pandabytelabs/traeky:<version>` – versioned images (matching the app version shown above)
 
 Tags:
 
 - **Stable (main)** → `latest`, `stable`, and `:<version>`
 - **Pre-release (develop)** → `testing` and `:<version>`
+- **Nightly (develop)** → `nightly`
 
 ---
 
@@ -49,7 +50,7 @@ Tags:
 ### Run the stable image
 
 ```bash
-docker run --rm   -p 5173:5173   --name traeky   pandabytelabs/traeky:latest
+docker run --rm -p 5173:5173 --name traeky pandabytelabs/traeky:latest
 ```
 
 Now open:
@@ -61,19 +62,18 @@ http://localhost:5173
 ### Run the testing (pre-release) image
 
 ```bash
-docker run --rm   -p 5173:5173   --name traeky-testing   pandabytelabs/traeky:testing
+docker run --rm -p 5173:5173 --name traeky-testing pandabytelabs/traeky:testing
 ```
 
 ### Environment variables
 
 The app supports configuration via environment variables.
 
-- `TRAEKY_DISABLE_CLOUD_CONNECT` (legacy alias: `DISABLE_CLOUD_CONNECT`)
-  - `"true"` → disables online features features in the standalone build
-  - `"false"` or unset → online features may be enabled (depending on your backend configuration)
+- `TRAEKY_PROFILE_ENCRYPTION_KEY`
+  - Generate one with 'openssl rand -base64 32'
+  - **If the key is changed**, all local profiles can no longer be decrypted.
 
 - `TRAEKY_PROFILE_PIN_SALT`
-  - Optional cryptographic salt used when hashing the profile PIN
   - Must be **exactly 64 characters** long and only contain `A-Z`, `a-z`, or `0-9`
   - If the value is invalid, Traeky falls back to a built-in default salt and logs an error in the browser console
   - For best security, set this to a random 64-character value and keep it stable once profiles exist
@@ -91,6 +91,7 @@ Example with online features disabled and a custom profile PIN salt:
 docker run --rm \
   -p 5173:5173 \
   -e TRAEKY_ALLOWED_HOSTS=myTraekyDomain.tld \
+  -e TRAEKY_PROFILE_ENCRYPTION_KEY=here-your-long-random-key \
   -e TRAEKY_PROFILE_PIN_SALT=CHANGEMETOARANDOMSIXTYFOURCHARALPHANUMERICVALUE00000000000000000 \
   --name traeky \
   pandabytelabs/traeky:latest
@@ -159,7 +160,7 @@ If you prefer to build your own image instead of using the public Docker Hub ima
 docker build -t traeky:local .
 
 # Run it
-docker run --rm   -p 5173:5173   --name traeky-local   traeky:local
+docker run --rm -p 5173:5173 --name traeky-local traeky:local
 ```
 
 You can then tag & push it to your own registry if you like.
@@ -172,7 +173,7 @@ You can then tag & push it to your own registry if you like.
   - Active development
   - Dependabot pull requests are opened against this branch
   - Pre-releases (GitHub pre-release) are built from `develop`
-  - Docker tag: `testing` + version tag
+  - Docker tag: `testing` + version tag or `nightly` for nightly
 
 - `main`
   - Stable, tested code
