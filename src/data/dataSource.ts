@@ -16,10 +16,33 @@ import { getTxExplorerUrl } from "../domain/assets";
 import { getActiveProfileConfig, setActiveProfileConfig, getActiveProfileTransactions, setActiveProfileTransactions, getNextActiveProfileTxId } from "../auth/profileStore";
 
 
+type SheetJsModule = {
+  read: (
+    data: ArrayBuffer | Uint8Array | string,
+    opts?: {
+      type?: string;
+      cellDates?: boolean;
+      [key: string]: unknown;
+    }
+  ) => {
+    SheetNames: string[];
+    Sheets: Record<string, unknown>;
+  };
+  utils: {
+    sheet_to_json: <T = unknown>(
+      sheet: unknown,
+      opts?: {
+        header?: number;
+        defval?: unknown;
+        [key: string]: unknown;
+      }
+    ) => T[];
+  };
+};
 // Lazily loaded XLSX module so that it is only pulled in when needed.
-let xlsxModulePromise: Promise<any> | null = null;
+let xlsxModulePromise: Promise<SheetJsModule> | null = null;
 
-async function getXlsxModule(): Promise<any> {
+async function getXlsxModule(): Promise<SheetJsModule> {
   if (!xlsxModulePromise) {
     // Use locally vendored SheetJS CE 0.19.3 to avoid vulnerable npm xlsx.
     // @ts-expect-error - vendored SheetJS module without full TypeScript types
