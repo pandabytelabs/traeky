@@ -829,7 +829,13 @@ const payload = {
       e.target.value = "";
     }
   };
-
+  const buildExportFileName = (ext: "pdf" | "csv") => {
+    const profileNameRaw = (activeProfile?.name ?? "profile").trim();
+    const profilePart =
+      profileNameRaw.replace(/[^a-z0-9_-]+/gi, "_") || "profile";
+    const stamp = new Date().toISOString().slice(0, 10);
+    return `Traeky_${profilePart}_${stamp}.${ext}`;
+  };
 
 const handleExportCsv = () => {
   if (!transactions || transactions.length === 0) {
@@ -885,8 +891,7 @@ const handleExportCsv = () => {
   const url = window.URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  const stamp = new Date().toISOString().slice(0, 10);
-  a.download = `traeky-transactions-${stamp}.csv`;
+  a.download = buildExportFileName("csv");
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -1006,7 +1011,7 @@ const handleResetHoldingConfigToDefault = () => {
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "crypto-transactions.pdf";
+    a.download = buildExportFileName("pdf");
     document.body.appendChild(a);
     a.click();
     a.remove();
