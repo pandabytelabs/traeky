@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useContext, useState } from "react";
 import type { DataSourceMode } from "../data/localStore";
 import { getPreferredMode, setPreferredMode } from "../data/localStore";
 
@@ -10,7 +10,6 @@ type AuthState = {
 
 type AuthContextValue = {
   auth: AuthState;
-  loginWithPasskey: () => Promise<void>;
   logout: () => void;
   openAuthModal: () => void;
   closeAuthModal: () => void;
@@ -20,17 +19,12 @@ type AuthContextValue = {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 /**
- * AuthProvider prepares the UI for a future passkey + 2FA based login.
+ * AuthProvider controls a simple local-only auth state for the UI.
  *
- * IMPORTANT:
- * - There is deliberately no real backend interaction here yet.
- * - The login method just simulates authentication so that the UI and mode
- *   switching can be wired without depending on backend readiness.
- * - Later, the `loginWithPasskey` implementation will:
- *     - obtain a challenge from the backend,
- *     - use WebAuthn APIs to sign it with a passkey,
- *     - verify the result on the backend,
- *     - and only then mark the user as authenticated.
+ * There is deliberately no real backend connection here. The only thing
+ * we keep track of is whether the user is "logged in" from the UI
+ * perspective, and which data source mode is active. In this build the
+ * mode is always local-only.
  */
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [auth, setAuth] = useState<AuthState>(() => {
@@ -47,13 +41,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const openAuthModal = () => setAuthModalOpen(true);
   const closeAuthModal = () => setAuthModalOpen(false);
 
+  const logout = () => {
+    setAuth({
+      isAuthenticated: false,
+      mode: "local-only",
+      userLabel: null,
+    });
+    setPreferredMode("local-only");
+    setAuthModalOpen(false);
+  };
+
   const value: AuthContextValue = {
     auth,
     logout,
     openAuthModal,
     closeAuthModal,
     isAuthModalOpen,
-    
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
