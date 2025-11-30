@@ -22,6 +22,7 @@ let xlsxModulePromise: Promise<any> | null = null;
 async function getXlsxModule(): Promise<any> {
   if (!xlsxModulePromise) {
     // Use locally vendored SheetJS CE 0.19.3 to avoid vulnerable npm xlsx.
+    // @ts-ignore - vendored SheetJS module without full TypeScript types
     xlsxModulePromise = import("../vendor/sheetjs/xlsx.mjs");
   }
   return xlsxModulePromise;
