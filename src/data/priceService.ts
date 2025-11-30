@@ -1,4 +1,5 @@
 import type { HoldingsResponse } from "../domain/types";
+import { getCoingeckoIdForSymbol } from "../domain/assets";
 
 /**
  * Simple client-side price service using a public API (e.g. CoinGecko).
@@ -12,20 +13,6 @@ import type { HoldingsResponse } from "../domain/types";
 
 const COINGECKO_API = "https://api.coingecko.com/api/v3/simple/price";
 
-const SYMBOL_TO_COINGECKO_ID: Record<string, string> = {
-  IOTA: "iota",
-  BTC: "bitcoin",
-  ETH: "ethereum",
-  SOL: "solana",
-  ADA: "cardano",
-  BNB: "binancecoin",
-  XRP: "ripple",
-  AVAX: "avalanche-2",
-  DOT: "polkadot",
-  MATIC: "matic-network",
-  DOGE: "dogecoin",
-  USDC: "usd-coin",
-};
 
 type SupportedFiat = "EUR" | "USD";
 
@@ -38,13 +25,6 @@ type PriceCacheEntry = {
 };
 
 const PRICE_CACHE_KEY = "traeky:price-cache-v1";
-/**
- * How long a cached price is considered "fresh" before we try to refresh it
- * from the price API again. We intentionally pick a relatively long interval
- * to reduce API calls and avoid rate limits.
- */
-const PRICE_CACHE_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
-
 let priceCache: Record<string, PriceCacheEntry> | null = null;
 let priceCacheLoaded = false;
 
@@ -125,12 +105,15 @@ function getCachedQuote(sym: string): { eur?: number; usd?: number } | null {
 }
 
 function mapSymbolToId(symbol: string): string | null {
-  const upper = symbol.toUpperCase();
-  if (SYMBOL_TO_COINGECKO_ID[upper]) {
-    return SYMBOL_TO_COINGECKO_ID[upper];
+  if (!symbol) {
+    return null;
+  }
+  const fromMetadata = getCoingeckoIdForSymbol(symbol);
+  if (fromMetadata) {
+    return fromMetadata;
   }
   // Heuristic fallback: try lowercase symbol as ID
-  return symbol ? symbol.toLowerCase() : null;
+  return symbol.toLowerCase();
 }
 
 
@@ -356,6 +339,16 @@ function toCoingeckoHistoryDateParam(dateKey: string): string | null {
  * This uses CoinGecko's `/coins/{id}/history` endpoint and caches results
  * per (symbol, date) in localStorage to avoid hitting the API repeatedly.
  */
+type HistoricalPriceApiResponse = {
+  market_data?: {
+    current_price?: {
+      eur?: number;
+      usd?: number;
+      [key: string]: unknown;
+    };
+  };
+};
+
 export async function fetchHistoricalPriceForSymbol(
   symbol: string,
   fiat: SupportedFiat,
@@ -433,7 +426,7 @@ const upper = symbol.toUpperCase();
       return null;
     }
 
-    const data: any = await res.json();
+    const data = (await res.json()) as HistoricalPriceApiResponse;
     const market = data && data.market_data && data.market_data.current_price;
     if (
       !market ||
@@ -483,7 +476,6 @@ export function hydratePriceCache(snapshot: AssetPriceCache): void {
 
 export async function applyPricesToHoldings(
   holdings: HoldingsResponse,
-  primaryFiat: SupportedFiat = "EUR",
 ): Promise<HoldingsResponse> {
   const symbols = holdings.items.map((h) => h.asset_symbol);
   const prices = await fetchPricesForSymbols(symbols);
