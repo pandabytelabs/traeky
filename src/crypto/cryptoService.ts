@@ -1,5 +1,5 @@
 /**
- * Frontend-only encryption helpers for preparing zero-knowledge cloud sync.
+ * Frontend-only encryption helpers for preparing zero-knowledge online sync.
  *
  * IMPORTANT:
  * - This module is intentionally self-contained and does not talk to any

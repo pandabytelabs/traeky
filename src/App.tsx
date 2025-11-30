@@ -30,11 +30,7 @@ const RESET_CONFIRMATION_WORD = "RESET";
 const APP_VERSION = packageJson.version;
 const LOCAL_STORAGE_LANG_KEY = "traeky_lang";
 
-const rawDisableCloudConnect =
-  (import.meta.env.TRAEKY_DISABLE_CLOUD_CONNECT as string | undefined) ??
-  (import.meta.env.DISABLE_CLOUD_CONNECT as string | undefined);
 
-const CLOUD_CONNECT_ENABLED = rawDisableCloudConnect === "true" ? false : true;
 
 function formatTxTypeLabel(txType: string | null | undefined): string {
   const code = (txType || "").toUpperCase();
@@ -1081,15 +1077,15 @@ const handleReloadHoldingPrices = async () => {
 const handleDownloadEncryptedBackup = async () => {
   try {
     if (!config) {
-      alert(t(lang, "cloud_backup_error_no_config"));
+      alert(t(lang, "backup_error_no_config"));
       return;
     }
     if (!transactions || transactions.length === 0) {
-      alert(t(lang, "cloud_backup_error_no_transactions"));
+      alert(t(lang, "backup_error_no_transactions"));
       return;
     }
 
-    const passphrase = window.prompt(t(lang, "cloud_backup_prompt_passphrase"));
+    const passphrase = window.prompt(t(lang, "backup_prompt_passphrase"));
     if (!passphrase) {
       return;
     }
@@ -1111,8 +1107,8 @@ const handleDownloadEncryptedBackup = async () => {
     a.remove();
     window.URL.revokeObjectURL(url);
   } catch (err) {
-    console.error("Failed to create encrypted cloud backup", err);
-    alert(t(lang, "cloud_backup_error_failed"));
+    console.error("Failed to create encrypted backup", err);
+    alert(t(lang, "backup_error_failed"));
   }
 };
 const handleRestoreEncryptedBackup = async () => {
@@ -1131,7 +1127,7 @@ const handleRestoreEncryptedBackup = async () => {
         const text = await file.text();
         const payload = JSON.parse(text);
 
-        const passphrase = window.prompt(t(lang, "cloud_backup_prompt_passphrase"));
+        const passphrase = window.prompt(t(lang, "backup_prompt_passphrase"));
         if (!passphrase) {
           return;
         }
@@ -1146,7 +1142,7 @@ const handleRestoreEncryptedBackup = async () => {
     }
 
         if (!snapshot || typeof snapshot !== "object" || !Array.isArray(snapshot.transactions)) {
-          alert(t(lang, "cloud_backup_error_invalid_file"));
+          alert(t(lang, "backup_error_invalid_file"));
           return;
         }
 
@@ -1221,7 +1217,7 @@ const handleRestoreEncryptedBackup = async () => {
           .filter((tx): tx is Transaction => tx !== null);
 
         if (!normalized.length) {
-          alert(t(lang, "cloud_backup_error_no_transactions"));
+          alert(t(lang, "backup_error_no_transactions"));
           return;
         }
 
@@ -1247,8 +1243,8 @@ const handleRestoreEncryptedBackup = async () => {
         setExpiring(expiring);
         setError(null);
       } catch (err) {
-        console.error("Failed to restore encrypted cloud backup", err);
-        alert(t(lang, "cloud_backup_error_decrypt_failed"));
+        console.error("Failed to restore encrypted backup", err);
+        alert(t(lang, "backup_error_decrypt_failed"));
       } finally {
         fileInput.value = "";
       }
@@ -1435,7 +1431,7 @@ const handleRestoreEncryptedBackup = async () => {
       
 
       
-        {CLOUD_CONNECT_ENABLED && isAuthModalOpen && (
+        {isAuthModalOpen && (
           <div className="modal-backdrop">
             <div className="modal">
               <h2>{t(lang, "login_title")}</h2>
@@ -1942,16 +1938,14 @@ const handleRestoreEncryptedBackup = async () => {
               <span className="version-badge">v{APP_VERSION}</span>
             </div>
             <p className="header-mode-explainer">
-              {auth.isAuthenticated
-                ? t(lang, "header_mode_explainer_cloud")
-                : t(lang, "header_mode_explainer_local")}
+                            {t(lang, "header_mode_explainer_local")}
             </p>
           </div>
           <div className="header-right">
             {auth.isAuthenticated && (
               <span
                 className="pill pill-small"
-                title={t(lang, "header_mode_pill_cloud_hint")}
+                title={t(lang, "header_mode_pill_local_hint")}
               >
                 {t(lang, "login_status_cloud")}
               </span>
@@ -1964,7 +1958,7 @@ const handleRestoreEncryptedBackup = async () => {
               >
                 {t(lang, "header_logout_button")}
               </button>
-            ) : CLOUD_CONNECT_ENABLED ? (
+            ) : null ? (
               <button
                 type="button"
                 className="btn-primary"

@@ -28,4 +28,3 @@ export function setPreferredMode(mode: DataSourceMode): void {
     // Ignore persistence errors; mode will simply not be remembered.
   }
 }
-}
