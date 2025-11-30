@@ -114,7 +114,7 @@ function holdingPeriodEndDate(tx: Transaction, holdingDays: number): Date | null
 }
 
 const App: React.FC = () => {
-  const { auth, openAuthModal, logout, isAuthModalOpen, loginWithPasskey, closeAuthModal, cloudClient } = useAuth();
+  const { auth, openAuthModal, logout, isAuthModalOpen, loginWithPasskey, closeAuthModal } = useAuth();
   const dataSource: PortfolioDataSource = React.useMemo(
     () => createPortfolioDataSource(auth.mode),
     [auth.mode]
@@ -1259,166 +1259,7 @@ const handleRestoreEncryptedBackup = async () => {
     console.error("Failed to open encrypted backup file picker", err);
   }
 };
-  const handleCloudSyncPush = async () => {
-    if (!auth.isAuthenticated || !cloudClient) {
-      alert(t(lang, "cloud_sync_not_available_standalone"));
-      return;
-    }
-    try {
-      if (!config) {
-        alert(t(lang, "cloud_backup_error_no_config"));
-        return;
-      }
-      if (!transactions || transactions.length === 0) {
-        alert(t(lang, "cloud_backup_error_no_transactions"));
-        return;
-      }
 
-      const passphrase = window.prompt(t(lang, "cloud_sync_passphrase_prompt"));
-      if (!passphrase) {
-        return;
-      }
-
-      const assetPrices = getPriceCacheSnapshot();
-      const snapshot = createPortfolioSnapshot(config, transactions, assetPrices);
-      const encrypted = await encryptSnapshotForCloud(snapshot, passphrase);
-
-      await cloudClient.uploadEncryptedSnapshot(encrypted);
-
-      alert(t(lang, "cloud_sync_push_success_placeholder"));
-    } catch (err) {
-      console.error("Cloud sync push failed", err);
-      alert(t(lang, "cloud_sync_push_error_placeholder"));
-    }
-  };
-
-  const handleCloudSyncPull = async () => {
-    if (!auth.isAuthenticated || !cloudClient) {
-      alert(t(lang, "cloud_sync_not_available_standalone"));
-      return;
-    }
-    try {
-      const payload = await cloudClient.downloadLatestEncryptedSnapshot();
-      if (!payload) {
-        alert(t(lang, "cloud_sync_no_snapshot_placeholder"));
-        return;
-      }
-
-      const passphrase = window.prompt(t(lang, "cloud_sync_passphrase_prompt"));
-      if (!passphrase) {
-        return;
-      }
-
-      const snapshot = await decryptSnapshotFromCloud(payload, passphrase);
-
-      if (snapshot.assetPrices && Object.keys(snapshot.assetPrices).length > 0) {
-        hydratePriceCache(snapshot.assetPrices);
-      }
-
-      if (!snapshot || typeof snapshot !== "object" || !Array.isArray(snapshot.transactions)) {
-        alert(t(lang, "cloud_backup_error_invalid_file"));
-        return;
-      }
-
-      const rawConfig = snapshot.config ?? {};
-      const safeConfig: AppConfig = {
-        holding_period_days:
-          typeof rawConfig.holding_period_days === "number" &&
-          Number.isFinite(rawConfig.holding_period_days) &&
-          rawConfig.holding_period_days >= 0
-            ? rawConfig.holding_period_days
-            : DEFAULT_HOLDING_PERIOD_DAYS,
-        upcoming_holding_window_days:
-          typeof rawConfig.upcoming_holding_window_days === "number" &&
-          Number.isFinite(rawConfig.upcoming_holding_window_days) &&
-          rawConfig.upcoming_holding_window_days > 0
-            ? rawConfig.upcoming_holding_window_days
-            : DEFAULT_UPCOMING_WINDOW_DAYS,
-        base_currency:
-          typeof rawConfig.base_currency === "string" &&
-          (rawConfig.base_currency === "EUR" || rawConfig.base_currency === "USD")
-            ? rawConfig.base_currency
-            : "EUR",
-      };
-
-      const normalized: Transaction[] = snapshot.transactions
-        .map((tx, index) => {
-          const amount = typeof tx.amount === "number" && Number.isFinite(tx.amount) ? tx.amount : 0;
-          const timestamp = typeof tx.timestamp === "string" ? tx.timestamp : "";
-          if (!timestamp || amount === 0) {
-            return null;
-          }
-
-          return {
-            id: index + 1,
-            asset_symbol: typeof tx.asset_symbol === "string" && tx.asset_symbol
-              ? tx.asset_symbol.toUpperCase()
-              : "UNKNOWN",
-            tx_type: typeof tx.tx_type === "string" && tx.tx_type
-              ? tx.tx_type.toUpperCase()
-              : "BUY",
-            amount,
-            price_fiat:
-              typeof tx.price_fiat === "number" && Number.isFinite(tx.price_fiat)
-                ? tx.price_fiat
-                : null,
-            fiat_currency: typeof tx.fiat_currency === "string" && tx.fiat_currency
-              ? tx.fiat_currency
-              : "EUR",
-            timestamp,
-            source: typeof tx.source === "string" && tx.source ? tx.source : null,
-            note: typeof tx.note === "string" && tx.note ? tx.note : null,
-            tx_id: typeof tx.tx_id === "string" && tx.tx_id ? tx.tx_id : null,
-            fiat_value:
-              typeof (tx as any).fiat_value === "number" &&
-              Number.isFinite((tx as any).fiat_value)
-                ? (tx as any).fiat_value
-                : null,
-            value_eur:
-              typeof (tx as any).value_eur === "number" &&
-              Number.isFinite((tx as any).value_eur)
-                ? (tx as any).value_eur
-                : null,
-            value_usd:
-              typeof (tx as any).value_usd === "number" &&
-              Number.isFinite((tx as any).value_usd)
-                ? (tx as any).value_usd
-                : null,
-          };
-        })
-        .filter((tx): tx is Transaction => tx !== null);
-
-      if (normalized.length === 0) {
-        alert(t(lang, "cloud_backup_error_no_transactions"));
-        return;
-      }
-
-      const holdingsSnapshot = computeLocalHoldings(normalized);
-      let holdings = holdingsSnapshot;
-      try {
-        holdings = await applyPricesToHoldings(holdingsSnapshot);
-      } catch (priceErr) {
-        console.warn("Failed to enrich holdings with prices for cloud pull", priceErr);
-      }
-
-      const expiring = computeLocalExpiring(normalized, safeConfig);
-
-      overwriteLocalTransactions(normalized);
-      setConfig(safeConfig);
-      setTransactions(normalized);
-      setHoldings(holdings.items ?? []);
-      setHoldingsPortfolioEur(holdings.portfolio_value_eur ?? null);
-      setHoldingsPortfolioUsd(holdings.portfolio_value_usd ?? null);
-      setFxRateEurUsd(holdings.fx_rate_eur_usd ?? null);
-      setExpiring(expiring);
-      setError(null);
-
-      alert(t(lang, "cloud_sync_pull_success_placeholder"));
-    } catch (err) {
-      console.error("Cloud sync pull failed", err);
-      alert(t(lang, "cloud_sync_pull_error_placeholder"));
-    }
-  };
 
 
 
@@ -3456,9 +3297,7 @@ const handleRestoreEncryptedBackup = async () => {
           <div className="app-footer-section">
             <h4>{t(lang, "footer_privacy_encryption_heading")}</h4>
             <p className="muted">
-              {auth.mode === "local-only"
-                ? t(lang, "encryption_local_only")
-                : t(lang, "encryption_cloud_demo")}
+                            {t(lang, "encryption_local_only")}
             </p>
             <p className="muted">
               {t(lang, "encryption_key_hint")}

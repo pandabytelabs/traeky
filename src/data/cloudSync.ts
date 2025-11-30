@@ -3,7 +3,7 @@ import type { EncryptedPayload } from "../crypto/cryptoService";
 import { encryptJsonWithPassphrase, decryptJsonWithPassphrase } from "../crypto/cryptoService";
 
 /**
- * Domain-level representation of what should be stored in the Traeky Cloud.
+ * Domain-level representation of what should be stored in an online sync service.
  *
  * NOTE:
  * - Holdings and expiring-holding data can always be recomputed from
@@ -54,7 +54,7 @@ export function createPortfolioSnapshot(
  * Encrypt a portfolio snapshot for cloud storage using the frontend crypto service.
  *
  * This function is intended to be called just before sending data to the
- * Traeky Cloud. It ensures that the backend only ever sees encrypted
+ * remote sync service. It ensures that the backend only ever sees encrypted
  * blobs and never plaintext user data.
  */
 export async function encryptSnapshotForCloud(

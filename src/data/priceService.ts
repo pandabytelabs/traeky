@@ -472,7 +472,7 @@ const upper = symbol.toUpperCase();
  * Hydrate the price cache from a previously stored snapshot.
  *
  * This is used when restoring from an encrypted backup or when loading data
- * that was synced from the Traeky Cloud. It allows the frontend to
+ * that was synced from an online sync service. It allows the frontend to
  * reuse historical token prices without additional API requests.
  */
 export function hydratePriceCache(snapshot: AssetPriceCache): void {
