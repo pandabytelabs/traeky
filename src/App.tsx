@@ -1097,9 +1097,10 @@ const handleReloadHoldingPrices = async () => {
           <div className="modal">
             {profileOverview.profiles.length === 0 ? (
               <>
+                <h2>Traeky</h2>
+                <p className="muted">{t(lang, "profile_setup_security_info")}</p>
                 <h2>{t(lang, "profile_setup_title")}</h2>
                 <p className="muted">{t(lang, "profile_setup_description")}</p>
-                <p className="muted" style={{ marginTop: "0.5rem" }}>{t(lang, "profile_setup_security_info")}</p>
                 {profileOverview.hasLegacyData && (
                   <p className="muted" style={{ marginTop: "0.5rem" }}>
                     {t(lang, "profile_setup_description_migrate")}
