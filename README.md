@@ -1,6 +1,6 @@
 # Traeky
 
-![Version](https://img.shields.io/github/package-json/v/pandabytelabs/traeky?label=version)
+[![Release][release-shield]][release-url]
 
 > Local (and self-hosted) crypto portfolio.
 
@@ -203,3 +203,6 @@ In short:
 - You may not sell or re-license Traeky.
 
 The full license text can be found in the `LICENSE` file in this repository.
+
+[release-shield]: https://img.shields.io/github/v/release/pandabytelabs/Traeky.svg?style=for-the-badge
+[release-url]: https://github.com/pandabytelabs/traeky/releases/latest
