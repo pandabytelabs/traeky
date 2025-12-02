@@ -175,7 +175,7 @@ const App: React.FC = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const displayHoldings = holdings.filter((h) => !isFiatAssetSymbol(h.asset_symbol));
   const [loading, setLoading] = useState(true);
-  const [, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [txFilterYear, setTxFilterYear] = useState<string>("");
   const [txFilterAsset, setTxFilterAsset] = useState<string>("");
   const [txFilterType, setTxFilterType] = useState<string>("");
@@ -1097,6 +1097,11 @@ const handleReloadHoldingPrices = async () => {
 
   return (
     <div className="layout">
+      {error && (
+        <div className="card" style={{ marginBottom: "1rem" }}>
+          <p className="error-text">{error}</p>
+        </div>
+      )}
       {profileOverview &&
         (profileOverview.profiles.length === 0 ||
           (profileOverview.profiles.length > 0 && (!activeProfile || isProfileLoginOverlayOpen))) && (
