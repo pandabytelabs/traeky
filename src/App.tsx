@@ -691,9 +691,26 @@ useEffect(() => {
       return;
     }
 
-    const upperSymbol = form.asset_symbol.trim().toUpperCase();
+    const rawAsset = (form.asset_symbol ?? "").toString().trim();
+    if (!rawAsset) {
+      setError(
+        t(lang, "tx_error_asset_required")
+      );
+      return;
+    }
+
+    const meta = getAssetMetadata(rawAsset);
+    if (!meta) {
+      setError(
+        t(lang, "tx_error_asset_unknown")
+      );
+      return;
+    }
+
+    const upperSymbol = meta.symbol;
     const amount = parsedAmount;
 
+    let priceFiat: number | null = null;
     let priceFiat: number | null = null;
 if (form.price_fiat) {
   // User explicitly provided a price.
