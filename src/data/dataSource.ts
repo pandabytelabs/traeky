@@ -242,63 +242,6 @@ function getNextLocalId(): number {
   try {
     return getNextActiveProfileTxId();
   } catch {
-    const cryptoTransferPairSkip = new Set<number>();
-    const cryptoTransferIndex = new Map<string, { index: number; txType: string }>();
-
-    for (let i = headerIndex + 1; i < lines.length; i++) {
-      if (cryptoTransferPairSkip.has(i)) {
-        continue;
-      }
-
-      const line = lines[i];
-      if (!line.trim()) continue;
-
-      const cols = parseCsvLine(line);
-      if (cols.length < headerCols.length) {
-        continue;
-      }
-
-      const record: Record<string, string> = {};
-      headerCols.forEach((colName, idx) => {
-        const raw = cols[idx] ?? "";
-        record[colName] = raw.replace(/^"+|"+$/g, "").trim();
-      });
-
-      const assetClass = (record["Asset class"] || "").trim();
-      if (assetClass !== "Cryptocurrency") {
-        continue;
-      }
-
-      const txTypeRaw = (record["Transaction Type"] || "").toLowerCase();
-      if (
-        txTypeRaw !== "transfer" &&
-        txTypeRaw !== "transfer(stake)" &&
-        txTypeRaw !== "transfer(unstake)"
-      ) {
-        continue;
-      }
-
-      const timestamp = record["Timestamp"] || "";
-      const assetSymbol = (record["Asset"] || "").trim().toUpperCase();
-      const amountAsset = record["Amount Asset"] || "";
-      const amountFiat = record["Amount Fiat"] || "";
-      const key = `${timestamp}||${assetSymbol}||${amountAsset}||${amountFiat}`;
-
-      const existing = cryptoTransferIndex.get(key);
-      if (
-        existing &&
-        ((existing.txType === "transfer" &&
-          (txTypeRaw === "transfer(stake)" || txTypeRaw === "transfer(unstake)")) ||
-          (txTypeRaw === "transfer" &&
-            (existing.txType === "transfer(stake)" || existing.txType === "transfer(unstake)")))
-      ) {
-        cryptoTransferPairSkip.add(existing.index);
-        cryptoTransferPairSkip.add(i);
-      } else {
-        cryptoTransferIndex.set(key, { index: i, txType: txTypeRaw });
-      }
-    }
-
     const items = loadLocalTransactions();
     const maxId = items.reduce((acc, tx) => (tx.id && tx.id > acc ? tx.id : acc), 0);
     return maxId + 1;
@@ -689,7 +632,7 @@ class LocalDataSource implements PortfolioDataSource {
       }
 
       const record: Record<string, string> = {};
-      headerCols.forEach((col, idx) => {
+      headerCols.forEach((col: string, idx: number) => {
         let value = parts[idx] ?? "";
         value = value.trim();
         if (value.length >= 2 && value.startsWith("\"") && value.endsWith("\"")) {
@@ -1163,7 +1106,7 @@ class LocalDataSource implements PortfolioDataSource {
       }
 
       const record: Record<string, string> = {};
-      headerCols.forEach((colName, idx) => {
+      headerCols.forEach((colName: string, idx: number) => {
         const raw = cols[idx] ?? "";
         record[colName] = raw.replace(/^"+|"+$/g, "").trim();
       });
