@@ -1045,11 +1045,12 @@ class LocalDataSource implements PortfolioDataSource {
         importedCount += 1;
       } catch (err) {
         console.error("Failed to import Binance row", err);
+        const msg = err instanceof Error ? err.message : String(err);
         errors.push(
           `${t(lang, "csv_import_error_line_prefix")} ${rowIndex}: ${t(
             lang,
             "csv_import_unknown_error",
-          )}`,
+          )} ${msg}`,
         );
       }
     });
@@ -1336,10 +1337,11 @@ class LocalDataSource implements PortfolioDataSource {
         importedCount += 1;
       } catch (err) {
         console.error("Failed to import Bitpanda row", err);
+        const msg = err instanceof Error ? err.message : String(err);
         errors.push(
           `${t(lang, "csv_import_error_line_prefix")} ${
             i + 1
-          }: ${t(lang, "csv_import_unknown_error")}`,
+          }: ${t(lang, "csv_import_unknown_error")} ${msg}`,
         );
       }
     }

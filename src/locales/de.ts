@@ -11,7 +11,7 @@ export const de: Record<string, string> = {
   csv_import_error_column_mismatch: "Spaltenanzahl passt nicht zur Kopfzeile.",
   csv_import_error_line_prefix: "Zeile",
   csv_import_schema_newer_warning: "Die CSV-Schemaversion ist neuer als die vom aktuellen Traeky-Build unterstützte Version. Der Import erfolgt daher nur auf Best-Effort-Basis.",
-  csv_import_unknown_error: "Unbekannter Fehler beim Import.",
+  csv_import_unknown_error: "Unbekannter Fehler beim Import:",
   csv_required: "Pflichtspalten: asset_symbol, tx_type, amount, timestamp, price_fiat, fiat_currency.",
   csv_result_errors_title: "Hinweise und Warnungen",
   csv_result_prefix: "Importiert:",
