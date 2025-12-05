@@ -968,7 +968,7 @@ class LocalDataSource implements PortfolioDataSource {
           fiat_currency: quoteAsset || "USDT",
           timestamp,
           source: "BINANCE",
-          note,
+          note: note || undefined,
           tx_id: null,
           fiat_value: fiatValue,
           value_eur: null,
@@ -1063,10 +1063,7 @@ class LocalDataSource implements PortfolioDataSource {
     if (b.note && b.note !== a.note) {
       noteParts.push(b.note);
     }
-    const combinedNote =
-      noteParts.length > 0
-        ? `${noteParts.join(" | ")} [internes Bitpanda-Staking-Transferpaar, neutral dargestellt]`
-        : "[internes Bitpanda-Staking-Transferpaar, neutral dargestellt]";
+    const combinedNote = noteParts.length > 0 ? noteParts.join(" | ") : undefined;
 
     const mergedTx: Transaction = {
       ...base,
@@ -1296,32 +1293,42 @@ async importBitpandaCsv(lang: Language, file: File): Promise<CsvImportResult> {
           fiatValue = amountFiat;
         }
 
-        const fee = parseFloat(record["Fee"] || "0");
-        const feeAsset = (record["Fee asset"] || "").trim();
-        const feePercent = record["Fee percent"] || "";
-        const spread = record["Spread"] || "";
-        const spreadCurrency = record["Spread Currency"] || "";
-        const taxFiat = record["Tax Fiat"] || "";
+const normalizeOptionalField = (raw: string | undefined): string => {
+  const value = (raw || "").trim();
+  if (value === "" || value === "-" || value === "–") {
+    return "";
+  }
+  return value;
+};
 
-        let note = `Bitpanda ${record["Transaction Type"] || ""} (${record["In/Out"] || ""})`;
-        const feeParts: string[] = [];
-        if (Number.isFinite(fee) && fee !== 0) {
-          feeParts.push(`fee ${fee} ${feeAsset || assetSymbol}`);
-        }
-        if (feePercent) {
-          feeParts.push(`fee% ${feePercent}`);
-        }
-        if (spread) {
-          feeParts.push(`spread ${spread} ${spreadCurrency || fiatCurrency}`);
-        }
-        if (taxFiat) {
-          feeParts.push(`tax ${taxFiat} ${fiatCurrency}`);
-        }
-        if (feeParts.length > 0) {
-          note += ` [${feeParts.join(", ")}]`;
-        }
+const fee = parseFloat(record["Fee"] || "0");
+const feeAsset = (record["Fee asset"] || "").trim();
+const feePercent = normalizeOptionalField(record["Fee percent"]);
+const spread = normalizeOptionalField(record["Spread"]);
+const spreadCurrency = normalizeOptionalField(record["Spread Currency"]);
+const taxFiat = normalizeOptionalField(record["Tax Fiat"]);
 
-        const txId = (record["Transaction ID"] || "").trim() || null;
+let note = `Bitpanda ${record["Transaction Type"] || ""} (${record["In/Out"] || ""})`;
+const feeParts: string[] = [];
+if (Number.isFinite(fee) && fee !== 0) {
+  feeParts.push(`fee ${fee} ${feeAsset || assetSymbol}`);
+}
+if (feePercent) {
+  feeParts.push(`fee% ${feePercent}`);
+}
+if (spread) {
+  feeParts.push(`spread ${spread} ${spreadCurrency || fiatCurrency}`);
+}
+if (taxFiat) {
+  feeParts.push(`tax ${taxFiat} ${fiatCurrency}`);
+}
+if (feeParts.length > 0) {
+  note += ` [${feeParts.join(", ")}]`;
+} else {
+  note = "";
+}
+
+const txId = (record["Transaction ID"] || "").trim() || null;
 
         if (txId && multiLegTxIds.has(txId) && !multiLegWarnings.has(txId)) {
           errors.push(
