@@ -1264,7 +1264,7 @@ async importBitpandaCsv(lang: Language, file: File): Promise<CsvImportResult> {
         } else if (txTypeRaw.includes("airdrop")) {
           txType = "AIRDROP";
 
-          // Ein- und Auszahlungen / Transfers
+          // Deposits and withdrawals / Transfers
         } else if (
           txTypeRaw.includes("deposit") ||
           txTypeRaw.includes("savings") ||
