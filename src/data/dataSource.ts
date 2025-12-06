@@ -1159,6 +1159,8 @@ async importBitpandaCsv(lang: Language, file: File): Promise<CsvImportResult> {
 
     const multiLegWarnings = new Set<string>();
 
+    const miotaCutoverDate = new Date("2023-10-04T00:00:00Z");
+
     for (let i = headerIndex + 1; i < lines.length; i++) {
       const line = lines[i];
       if (!line.trim()) continue;
@@ -1211,7 +1213,13 @@ async importBitpandaCsv(lang: Language, file: File): Promise<CsvImportResult> {
         }
         const timestamp = date.toISOString();
 
-        const assetSymbol = (record["Asset"] || "").trim().toUpperCase();
+        let assetSymbol = (record["Asset"] || "").trim().toUpperCase();
+
+        // Bitpanda will continue to use “MIOTA” for a long time, even though the new IOTA will already be in effect from October 4, 2023.
+        // From the cutover date, we will add MIOTA to IOTA.
+        if (assetSymbol === "MIOTA" && date >= miotaCutoverDate) {
+          assetSymbol = "IOTA";
+        }
 
         const amountAsset = parseFloat(record["Amount Asset"] || "0");
         if (!assetSymbol || !Number.isFinite(amountAsset) || amountAsset === 0) {
@@ -1256,7 +1264,7 @@ async importBitpandaCsv(lang: Language, file: File): Promise<CsvImportResult> {
         } else if (txTypeRaw.includes("airdrop")) {
           txType = "AIRDROP";
 
-        // Deposits / Savings / Transfers
+          // Ein- und Auszahlungen / Transfers
         } else if (
           txTypeRaw.includes("deposit") ||
           txTypeRaw.includes("savings") ||
@@ -1264,29 +1272,24 @@ async importBitpandaCsv(lang: Language, file: File): Promise<CsvImportResult> {
           txTypeRaw === "transfer(stake)" ||
           txTypeRaw === "transfer(unstake)"
         ) {
-          // For transfers we rely on In/Out to determine direction.
-          txType = inOutRaw === "incoming" ? "TRANSFER_IN" : "TRANSFER_OUT";
 
-        // Withdrawals
+          txType = inOutRaw === "incoming" ? "TRANSFER_IN" : "TRANSFER_OUT";
         } else if (txTypeRaw.includes("withdraw") || txTypeRaw === "withdrawal") {
           txType = "TRANSFER_OUT";
 
-        // Trades (buy / sell / trade)
+          // Trades (buy / sell / trade)
         } else if (
           txTypeRaw.includes("trade") ||
           txTypeRaw === "buy" ||
           txTypeRaw === "sell"
         ) {
-          // Bitpanda often marks BUY trades as "outgoing" and SELL trades as "incoming".
-          // Therefore we must not use In/Out here.
+
           if (txTypeRaw === "sell") {
             txType = "SELL";
           } else {
-            // Treat "buy" and generic "trade" as BUY.
             txType = "BUY";
           }
 
-        // Fallback: default to BUY rather than guessing via In/Out.
         } else {
           txType = "BUY";
         }
