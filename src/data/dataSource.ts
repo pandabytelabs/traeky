@@ -1249,10 +1249,14 @@ async importBitpandaCsv(lang: Language, file: File): Promise<CsvImportResult> {
         const inOutRaw = (record["In/Out"] || "").toLowerCase();
 
         let txType = "BUY";
+
+        // Rewards / Staking / Airdrops
         if (txTypeRaw === "reward" || txTypeRaw.includes("staking")) {
           txType = "STAKING_REWARD";
         } else if (txTypeRaw.includes("airdrop")) {
           txType = "AIRDROP";
+
+        // Deposits / Savings / Transfers
         } else if (
           txTypeRaw.includes("deposit") ||
           txTypeRaw.includes("savings") ||
@@ -1260,17 +1264,31 @@ async importBitpandaCsv(lang: Language, file: File): Promise<CsvImportResult> {
           txTypeRaw === "transfer(stake)" ||
           txTypeRaw === "transfer(unstake)"
         ) {
+          // For transfers we rely on In/Out to determine direction.
           txType = inOutRaw === "incoming" ? "TRANSFER_IN" : "TRANSFER_OUT";
+
+        // Withdrawals
         } else if (txTypeRaw.includes("withdraw") || txTypeRaw === "withdrawal") {
           txType = "TRANSFER_OUT";
+
+        // Trades (buy / sell / trade)
         } else if (
           txTypeRaw.includes("trade") ||
           txTypeRaw === "buy" ||
           txTypeRaw === "sell"
         ) {
-          txType = inOutRaw === "incoming" ? "BUY" : "SELL";
+          // Bitpanda often marks BUY trades as "outgoing" and SELL trades as "incoming".
+          // Therefore we must not use In/Out here.
+          if (txTypeRaw === "sell") {
+            txType = "SELL";
+          } else {
+            // Treat "buy" and generic "trade" as BUY.
+            txType = "BUY";
+          }
+
+        // Fallback: default to BUY rather than guessing via In/Out.
         } else {
-          txType = inOutRaw === "incoming" ? "BUY" : "SELL";
+          txType = "BUY";
         }
 
         const id = getNextLocalId();
