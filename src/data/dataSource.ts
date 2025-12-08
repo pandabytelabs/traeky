@@ -1108,11 +1108,59 @@ class LocalDataSource implements PortfolioDataSource {
       }
       const combinedNote = noteParts.length > 0 ? noteParts.join(" | ") : undefined;
 
+      const symbol = (base.asset_symbol || "").toUpperCase();
+      const rawAmountA =
+        typeof a.amount === "number" ? a.amount : Number(a.amount ?? 0);
+      const rawAmountB =
+        typeof b.amount === "number" ? b.amount : Number(b.amount ?? 0);
+      const amountCandidate =
+        (Number.isFinite(rawAmountA) && rawAmountA !== 0 ? rawAmountA : 0) ||
+        (Number.isFinite(rawAmountB) ? rawAmountB : 0);
+      const amountAbs = Math.abs(amountCandidate);
+
+      const noteSource = `${a.note || ""} ${b.note || ""}`.toLowerCase();
+      const isStakeLike =
+        noteSource.includes("transfer(stake") ||
+        noteSource.includes("transfer(unstake") ||
+        noteSource.includes("staking");
+
+      const aTimeNote = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+      const bTimeNote = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+      const safeATimeNote = Number.isFinite(aTimeNote) ? aTimeNote : 0;
+      const safeBTimeNote = Number.isFinite(bTimeNote) ? bTimeNote : 0;
+      const earlierIsA = safeATimeNote <= safeBTimeNote;
+      const earlierTx = earlierIsA ? a : b;
+      const earlierType = (earlierTx.tx_type || "").toUpperCase();
+
+      let directionLabel: string | null = null;
+      if (earlierType === "TRANSFER_OUT") {
+        directionLabel = "OUT";
+      } else if (earlierType === "TRANSFER_IN") {
+        directionLabel = "IN";
+      }
+
+      let extraNote: string | null = null;
+      if (amountAbs > 0 && symbol) {
+        const baseLabel = isStakeLike ? "internal staking transfer" : "internal transfer";
+        if (directionLabel) {
+          extraNote = `${baseLabel} ${directionLabel} ${amountAbs} ${symbol}`;
+        } else {
+          extraNote = `${baseLabel} ${amountAbs} ${symbol}`;
+        }
+      } else if (isStakeLike) {
+        extraNote = "internal staking transfer";
+      }
+
+      let finalNote = combinedNote;
+      if (extraNote) {
+        finalNote = combinedNote ? `${combinedNote} | ${extraNote}` : extraNote;
+      }
+
       const mergedTx: Transaction = {
         ...base,
         tx_type: "TRANSFER_INTERNAL",
         amount: 0,
-        note: combinedNote,
+        note: finalNote,
         tx_id: null,
       };
 
