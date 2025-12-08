@@ -2262,20 +2262,45 @@ const handleReloadHoldingPrices = async () => {
                     <tr key={tx.id ?? `tx-${index}`}>
                       <td>{tx.id}</td>
                       <td>
-                        <button
-                          type="button"
-                          className="btn-secondary"
-                          onClick={() => {
-                            setTxChainFilterRootId(tx.id);
-                            setTxFilterYear("");
-                            setTxFilterAsset("");
-                            setTxFilterType("");
-                            setTxSearch("");
-                            setTxPage(1);
-                          }}
-                        >
-                          {t(lang, "tx_chain_view")}
-                        </button>
+                        {(() => {
+                          const ids: number[] = [];
+                          if (typeof tx.linked_tx_prev_id === "number") {
+                            ids.push(tx.linked_tx_prev_id);
+                          }
+                          if (typeof tx.linked_tx_next_id === "number") {
+                            ids.push(tx.linked_tx_next_id);
+                          }
+                          if (ids.length === 0) {
+                            return "–";
+                          }
+                          return (
+                            <span className="tx-chain-links">
+                              {ids.map((id, index) => (
+                                <button
+                                  key={id}
+                                  type="button"
+                                  className="tx-chain-link"
+                                  onClick={() => {
+                                    setTxChainFilterRootId(id);
+                                    setTxFilterYear("");
+                                    setTxFilterAsset("");
+                                    setTxFilterType("");
+                                    setTxSearch("");
+                                    setTxPage(1);
+                                  }}
+                                >
+                                  {id}
+                                </button>
+                              )).reduce<React.ReactNode[]>((acc, node, index) => {
+                                if (index > 0) {
+                                  acc.push(", ");
+                                }
+                                acc.push(node);
+                                return acc;
+                              }, [])}
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td>
   {(() => {
