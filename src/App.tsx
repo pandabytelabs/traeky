@@ -109,6 +109,59 @@ function holdingPeriodEndDate(tx: Transaction, holdingDays: number): Date | null
   const endTime = buyTime + holdingDays * 24 * 60 * 60 * 1000;
   return new Date(endTime);
 }
+function buildLinkedTransactionChain(transactions: Transaction[], rootId: number): Set<number> {
+  const idToTx = new Map<number, Transaction>();
+  for (const tx of transactions) {
+    if (typeof tx.id === "number") {
+      idToTx.set(tx.id, tx);
+    }
+  }
+  if (!idToTx.has(rootId)) {
+    return new Set<number>();
+  }
+  const adjacency = new Map<number, Set<number>>();
+  const addEdge = (a: number | null | undefined, b: number | null | undefined) => {
+    if (typeof a !== "number" || typeof b !== "number") {
+      return;
+    }
+    if (!adjacency.has(a)) {
+      adjacency.set(a, new Set<number>());
+    }
+    if (!adjacency.has(b)) {
+      adjacency.set(b, new Set<number>());
+    }
+    adjacency.get(a)!.add(b);
+    adjacency.get(b)!.add(a);
+  };
+  for (const tx of transactions) {
+    if (typeof tx.id !== "number") {
+      continue;
+    }
+    addEdge(tx.id, tx.linked_tx_prev_id);
+    addEdge(tx.id, tx.linked_tx_next_id);
+  }
+  const visited = new Set<number>();
+  const queue: number[] = [];
+  queue.push(rootId);
+  while (queue.length > 0) {
+    const current = queue.shift() as number;
+    if (visited.has(current)) {
+      continue;
+    }
+    visited.add(current);
+    const neighbors = adjacency.get(current);
+    if (!neighbors) {
+      continue;
+    }
+    neighbors.forEach((n) => {
+      if (!visited.has(n)) {
+        queue.push(n);
+      }
+    });
+  }
+  return visited;
+}
+
 
 const App: React.FC = () => {
   const { auth, logout, isAuthModalOpen, closeAuthModal } = useAuth();
@@ -182,6 +235,7 @@ const App: React.FC = () => {
   const [txFilterAsset, setTxFilterAsset] = useState<string>("");
   const [txFilterType, setTxFilterType] = useState<string>("");
   const [txSearch, setTxSearch] = useState<string>("");
+  const [txChainFilterRootId, setTxChainFilterRootId] = useState<number | null>(null);
   const [txPage, setTxPage] = useState(1);
   const [txPageSize, setTxPageSize] = useState(25);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
