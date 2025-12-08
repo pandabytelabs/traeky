@@ -2285,7 +2285,7 @@ const handleReloadHoldingPrices = async () => {
                                     }
                                   }}
                                 >
-                                  <span className="tx-chain-label">N</span>
+                                  <span className="tx-chain-label">Next:</span>
                                   {tx.linked_tx_next_id}
                                 </button>
                               )}
@@ -2304,7 +2304,7 @@ const handleReloadHoldingPrices = async () => {
                                     }
                                   }}
                                 >
-                                  <span className="tx-chain-label">P</span>
+                                  <span className="tx-chain-label">Prev:</span>
                                   {tx.linked_tx_prev_id}
                                 </button>
                               )}
