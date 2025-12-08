@@ -143,6 +143,8 @@ export interface PortfolioDataSource {
     source: string | null;
     note: string | null;
     tx_id: string | null;
+    linked_tx_prev_id: number | null;
+    linked_tx_next_id: number | null;
   }): Promise<void>;
 
   deleteTransaction(id: number): Promise<void>;
@@ -488,21 +490,31 @@ class LocalDataSource implements PortfolioDataSource {
     source: string | null;
     note: string | null;
     tx_id: string | null;
+    linked_tx_prev_id: number | null;
+    linked_tx_next_id: number | null;
   }): Promise<void> {
     const items = loadLocalTransactions();
-    const isEdit = payload.id != null;
+    
+const isEdit = payload.id != null;
+
+    let targetTx: Transaction | null = null;
+    let originalPrev: number | null = null;
+    let originalNext: number | null = null;
 
     if (isEdit) {
       const index = items.findIndex((tx) => tx.id === payload.id);
       if (index !== -1) {
+        const existing = items[index];
+        originalPrev = existing.linked_tx_prev_id ?? null;
+        originalNext = existing.linked_tx_next_id ?? null;
         const priceFiat = payload.price_fiat;
         const fiatValue =
           priceFiat != null && Number.isFinite(priceFiat)
             ? priceFiat * payload.amount
             : null;
 
-        items[index] = {
-          ...items[index],
+        const updated: Transaction = {
+          ...existing,
           asset_symbol: payload.asset_symbol,
           tx_type: payload.tx_type,
           amount: payload.amount,
@@ -512,11 +524,13 @@ class LocalDataSource implements PortfolioDataSource {
           source: payload.source,
           note: payload.note,
           tx_id: payload.tx_id,
+          linked_tx_prev_id: payload.linked_tx_prev_id,
+          linked_tx_next_id: payload.linked_tx_next_id,
           fiat_value: fiatValue,
-          // Leave value_eur/value_usd as-is or null; will be recomputed later.
         };
+        items[index] = updated;
+        targetTx = updated;
       } else {
-        // If not found, treat as new.
         const id = getNextLocalId();
         const priceFiat = payload.price_fiat;
         const fiatValue =
@@ -524,7 +538,7 @@ class LocalDataSource implements PortfolioDataSource {
             ? priceFiat * payload.amount
             : null;
 
-        items.push({
+        const created: Transaction = {
           id,
           asset_symbol: payload.asset_symbol,
           tx_type: payload.tx_type,
@@ -535,10 +549,14 @@ class LocalDataSource implements PortfolioDataSource {
           source: payload.source,
           note: payload.note,
           tx_id: payload.tx_id,
+          linked_tx_prev_id: payload.linked_tx_prev_id,
+          linked_tx_next_id: payload.linked_tx_next_id,
           fiat_value: fiatValue,
           value_eur: null,
           value_usd: null,
-        });
+        };
+        items.push(created);
+        targetTx = created;
       }
     } else {
       const id = getNextLocalId();
@@ -548,7 +566,7 @@ class LocalDataSource implements PortfolioDataSource {
           ? priceFiat * payload.amount
           : null;
 
-      items.push({
+      const created: Transaction = {
         id,
         asset_symbol: payload.asset_symbol,
         tx_type: payload.tx_type,
@@ -559,19 +577,79 @@ class LocalDataSource implements PortfolioDataSource {
         source: payload.source,
         note: payload.note,
         tx_id: payload.tx_id,
+        linked_tx_prev_id: payload.linked_tx_prev_id,
+        linked_tx_next_id: payload.linked_tx_next_id,
         fiat_value: fiatValue,
         value_eur: null,
         value_usd: null,
-      });
+      };
+      items.push(created);
+      targetTx = created;
+    }
+
+    if (targetTx) {
+      const id = targetTx.id;
+      const newPrev = targetTx.linked_tx_prev_id ?? null;
+      const newNext = targetTx.linked_tx_next_id ?? null;
+
+      if (originalPrev != null && originalPrev !== newPrev) {
+        const otherIndex = items.findIndex((tx) => tx.id === originalPrev);
+        if (otherIndex !== -1) {
+          const other = items[otherIndex];
+          if (other.linked_tx_next_id === id) {
+            items[otherIndex] = { ...other, linked_tx_next_id: null };
+          }
+        }
+      }
+
+      if (originalNext != null && originalNext !== newNext) {
+        const otherIndex = items.findIndex((tx) => tx.id === originalNext);
+        if (otherIndex !== -1) {
+          const other = items[otherIndex];
+          if (other.linked_tx_prev_id === id) {
+            items[otherIndex] = { ...other, linked_tx_prev_id: null };
+          }
+        }
+      }
+
+      if (newPrev != null) {
+        const otherIndex = items.findIndex((tx) => tx.id === newPrev);
+        if (otherIndex !== -1) {
+          const other = items[otherIndex];
+          if (other.linked_tx_next_id !== id) {
+            items[otherIndex] = { ...other, linked_tx_next_id: id };
+          }
+        }
+      }
+
+      if (newNext != null) {
+        const otherIndex = items.findIndex((tx) => tx.id === newNext);
+        if (otherIndex !== -1) {
+          const other = items[otherIndex];
+          if (other.linked_tx_prev_id !== id) {
+            items[otherIndex] = { ...other, linked_tx_prev_id: id };
+          }
+        }
+      }
     }
 
     saveLocalTransactions(items);
   }
 
+
   async deleteTransaction(id: number): Promise<void> {
     const items = loadLocalTransactions();
-    const filtered = items.filter((tx) => tx.id !== id);
-    saveLocalTransactions(filtered);
+    const updated = items.map((tx) => {
+      if (tx.linked_tx_prev_id === id || tx.linked_tx_next_id === id) {
+        return {
+          ...tx,
+          linked_tx_prev_id: tx.linked_tx_prev_id === id ? null : tx.linked_tx_prev_id,
+          linked_tx_next_id: tx.linked_tx_next_id === id ? null : tx.linked_tx_next_id,
+        };
+      }
+      return tx;
+    }).filter((tx) => tx.id !== id);
+    saveLocalTransactions(updated);
   }
 
   async importCsv(lang: Language, file: File): Promise<CsvImportResult> {
@@ -748,6 +826,27 @@ class LocalDataSource implements PortfolioDataSource {
           }
         }
 
+        let linkedPrevId: number | null = null;
+        let linkedNextId: number | null = null;
+        if (record["linked_tx_prev_id"]) {
+          const raw = record["linked_tx_prev_id"].trim();
+          if (raw) {
+            const parsed = parseInt(raw, 10);
+            if (Number.isFinite(parsed) && parsed > 0) {
+              linkedPrevId = parsed;
+            }
+          }
+        }
+        if (record["linked_tx_next_id"]) {
+          const raw = record["linked_tx_next_id"].trim();
+          if (raw) {
+            const parsed = parseInt(raw, 10);
+            if (Number.isFinite(parsed) && parsed > 0) {
+              linkedNextId = parsed;
+            }
+          }
+        }
+
         const tx: Transaction = {
           id,
           asset_symbol: (record["asset_symbol"] || "").toUpperCase(),
@@ -759,6 +858,8 @@ class LocalDataSource implements PortfolioDataSource {
           source: record["source"] || null,
           note: record["note"] || null,
           tx_id: record["tx_id"] || null,
+          linked_tx_prev_id: linkedPrevId,
+          linked_tx_next_id: linkedNextId,
           fiat_value: fiatValue,
           value_eur: valueEur,
           value_usd: valueUsd,
@@ -1497,6 +1598,7 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
     const headerYStart = marginTop + 16;
     let y = headerYStart;
 
+    const colId = t(lang, "pdf_col_id");
     const colTime = t(lang, "pdf_col_time");
     const colAsset = t(lang, "pdf_col_asset");
     const colType = t(lang, "pdf_col_type");
@@ -1509,6 +1611,7 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
     const colNote = t(lang, "pdf_col_note");
 
     const headers = [
+      colId,
       colTime,
       colAsset,
       colType,
@@ -1523,6 +1626,7 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
 
     const txIdLinks: (string | null)[] = [];
     const rows: string[][] = txs.map((tx) => {
+      const idStr = typeof tx.id === "number" ? String(tx.id) : "";
       const timeStr = tx.timestamp
         ? tx.timestamp.substring(0, 19).replace("T", " ")
         : "";
@@ -1571,6 +1675,7 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
       txIdLinks.push(txExplorerUrl);
 
       return [
+        idStr,
         timeStr,
         tx.asset_symbol ?? "",
         formatTxTypeForPdf(tx.tx_type),
@@ -1585,7 +1690,7 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
     });
 
     const colCount = headers.length;
-    const wrapColumns = new Set<number>([7, 8, 9]); // source, txId, note
+    const wrapColumns = new Set<number>([8, 9, 10]); // source, txId, note
 
     const charWidths: number[] = [];
     for (let col = 0; col < colCount; col++) {
@@ -1601,24 +1706,26 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
       // Amount and value get a bit more room for readability.
       let maxCap: number;
       if (col === 0) {
+        maxCap = 8;
+      } else if (col === 1) {
         // time
         maxCap = 16;
-      } else if (col === 2) {
+      } else if (col === 3) {
         // type (can be quite narrow because it is always broken into two lines)
         maxCap = 10;
-      } else if (col === 3 || col === 5) {
+      } else if (col === 4 || col === 6) {
         // amount, value - give these a bit more space
         maxCap = 26;
-      } else if (col === 4) {
+      } else if (col === 5) {
         // price
         maxCap = 22;
-      } else if (col === 7) {
+      } else if (col === 8) {
         // Source: wrap earlier to avoid pushing the note too far
         maxCap = 20;
-      } else if (col === 8) {
+      } else if (col === 9) {
         // TX-ID: wrap earlier so hashes/ids do not stretch the layout
         maxCap = 18;
-      } else if (col === 9) {
+      } else if (col === 10) {
         // Note: wrap earlier so the column does not dominate the width
         maxCap = 16;
       } else if (wrapColumns.has(col)) {
@@ -1727,8 +1834,8 @@ wrapped.forEach((lines, idx) => {
   for (const line of lines) {
     doc.text(String(line), cellX, lineY);
 
-    // Add an invisible clickable link for the TX-ID column (column index 8)
-    if (idx === 8) {
+    // Add an invisible clickable link for the TX-ID column (column index 9)
+    if (idx === 9) {
       const link = txIdLinks[rowIndex] || null;
       if (link && line === lines[0]) {
         const cellWidth = colWidths[idx] - 2;
