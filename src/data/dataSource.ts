@@ -143,8 +143,6 @@ export interface PortfolioDataSource {
     source: string | null;
     note: string | null;
     tx_id: string | null;
-    linked_tx_prev_id: number | null;
-    linked_tx_next_id: number | null;
   }): Promise<void>;
 
   deleteTransaction(id: number): Promise<void>;
@@ -490,31 +488,21 @@ class LocalDataSource implements PortfolioDataSource {
     source: string | null;
     note: string | null;
     tx_id: string | null;
-    linked_tx_prev_id: number | null;
-    linked_tx_next_id: number | null;
   }): Promise<void> {
     const items = loadLocalTransactions();
-    
-const isEdit = payload.id != null;
-
-    let targetTx: Transaction | null = null;
-    let originalPrev: number | null = null;
-    let originalNext: number | null = null;
+    const isEdit = payload.id != null;
 
     if (isEdit) {
       const index = items.findIndex((tx) => tx.id === payload.id);
       if (index !== -1) {
-        const existing = items[index];
-        originalPrev = existing.linked_tx_prev_id ?? null;
-        originalNext = existing.linked_tx_next_id ?? null;
         const priceFiat = payload.price_fiat;
         const fiatValue =
           priceFiat != null && Number.isFinite(priceFiat)
             ? priceFiat * payload.amount
             : null;
 
-        const updated: Transaction = {
-          ...existing,
+        items[index] = {
+          ...items[index],
           asset_symbol: payload.asset_symbol,
           tx_type: payload.tx_type,
           amount: payload.amount,
@@ -524,13 +512,11 @@ const isEdit = payload.id != null;
           source: payload.source,
           note: payload.note,
           tx_id: payload.tx_id,
-          linked_tx_prev_id: payload.linked_tx_prev_id,
-          linked_tx_next_id: payload.linked_tx_next_id,
           fiat_value: fiatValue,
+          // Leave value_eur/value_usd as-is or null; will be recomputed later.
         };
-        items[index] = updated;
-        targetTx = updated;
       } else {
+        // If not found, treat as new.
         const id = getNextLocalId();
         const priceFiat = payload.price_fiat;
         const fiatValue =
@@ -538,7 +524,7 @@ const isEdit = payload.id != null;
             ? priceFiat * payload.amount
             : null;
 
-        const created: Transaction = {
+        items.push({
           id,
           asset_symbol: payload.asset_symbol,
           tx_type: payload.tx_type,
@@ -549,14 +535,10 @@ const isEdit = payload.id != null;
           source: payload.source,
           note: payload.note,
           tx_id: payload.tx_id,
-          linked_tx_prev_id: payload.linked_tx_prev_id,
-          linked_tx_next_id: payload.linked_tx_next_id,
           fiat_value: fiatValue,
           value_eur: null,
           value_usd: null,
-        };
-        items.push(created);
-        targetTx = created;
+        });
       }
     } else {
       const id = getNextLocalId();
@@ -566,7 +548,7 @@ const isEdit = payload.id != null;
           ? priceFiat * payload.amount
           : null;
 
-      const created: Transaction = {
+      items.push({
         id,
         asset_symbol: payload.asset_symbol,
         tx_type: payload.tx_type,
@@ -577,79 +559,19 @@ const isEdit = payload.id != null;
         source: payload.source,
         note: payload.note,
         tx_id: payload.tx_id,
-        linked_tx_prev_id: payload.linked_tx_prev_id,
-        linked_tx_next_id: payload.linked_tx_next_id,
         fiat_value: fiatValue,
         value_eur: null,
         value_usd: null,
-      };
-      items.push(created);
-      targetTx = created;
-    }
-
-    if (targetTx) {
-      const id = targetTx.id;
-      const newPrev = targetTx.linked_tx_prev_id ?? null;
-      const newNext = targetTx.linked_tx_next_id ?? null;
-
-      if (originalPrev != null && originalPrev !== newPrev) {
-        const otherIndex = items.findIndex((tx) => tx.id === originalPrev);
-        if (otherIndex !== -1) {
-          const other = items[otherIndex];
-          if (other.linked_tx_next_id === id) {
-            items[otherIndex] = { ...other, linked_tx_next_id: null };
-          }
-        }
-      }
-
-      if (originalNext != null && originalNext !== newNext) {
-        const otherIndex = items.findIndex((tx) => tx.id === originalNext);
-        if (otherIndex !== -1) {
-          const other = items[otherIndex];
-          if (other.linked_tx_prev_id === id) {
-            items[otherIndex] = { ...other, linked_tx_prev_id: null };
-          }
-        }
-      }
-
-      if (newPrev != null) {
-        const otherIndex = items.findIndex((tx) => tx.id === newPrev);
-        if (otherIndex !== -1) {
-          const other = items[otherIndex];
-          if (other.linked_tx_next_id !== id) {
-            items[otherIndex] = { ...other, linked_tx_next_id: id };
-          }
-        }
-      }
-
-      if (newNext != null) {
-        const otherIndex = items.findIndex((tx) => tx.id === newNext);
-        if (otherIndex !== -1) {
-          const other = items[otherIndex];
-          if (other.linked_tx_prev_id !== id) {
-            items[otherIndex] = { ...other, linked_tx_prev_id: id };
-          }
-        }
-      }
+      });
     }
 
     saveLocalTransactions(items);
   }
 
-
   async deleteTransaction(id: number): Promise<void> {
     const items = loadLocalTransactions();
-    const updated = items.map((tx) => {
-      if (tx.linked_tx_prev_id === id || tx.linked_tx_next_id === id) {
-        return {
-          ...tx,
-          linked_tx_prev_id: tx.linked_tx_prev_id === id ? null : tx.linked_tx_prev_id,
-          linked_tx_next_id: tx.linked_tx_next_id === id ? null : tx.linked_tx_next_id,
-        };
-      }
-      return tx;
-    }).filter((tx) => tx.id !== id);
-    saveLocalTransactions(updated);
+    const filtered = items.filter((tx) => tx.id !== id);
+    saveLocalTransactions(filtered);
   }
 
   async importCsv(lang: Language, file: File): Promise<CsvImportResult> {
@@ -826,27 +748,6 @@ const isEdit = payload.id != null;
           }
         }
 
-        let linkedPrevId: number | null = null;
-        let linkedNextId: number | null = null;
-        if (record["linked_tx_prev_id"]) {
-          const raw = record["linked_tx_prev_id"].trim();
-          if (raw) {
-            const parsed = parseInt(raw, 10);
-            if (Number.isFinite(parsed) && parsed > 0) {
-              linkedPrevId = parsed;
-            }
-          }
-        }
-        if (record["linked_tx_next_id"]) {
-          const raw = record["linked_tx_next_id"].trim();
-          if (raw) {
-            const parsed = parseInt(raw, 10);
-            if (Number.isFinite(parsed) && parsed > 0) {
-              linkedNextId = parsed;
-            }
-          }
-        }
-
         const tx: Transaction = {
           id,
           asset_symbol: (record["asset_symbol"] || "").toUpperCase(),
@@ -858,8 +759,6 @@ const isEdit = payload.id != null;
           source: record["source"] || null,
           note: record["note"] || null,
           tx_id: record["tx_id"] || null,
-          linked_tx_prev_id: linkedPrevId,
-          linked_tx_next_id: linkedNextId,
           fiat_value: fiatValue,
           value_eur: valueEur,
           value_usd: valueUsd,
@@ -1109,6 +1008,7 @@ const isEdit = payload.id != null;
 
 
   
+  
   mergeBitpandaInternalTransfers(transactions: Transaction[]): Transaction[] {
   const remaining: Transaction[] = [];
   const grouped = new Map<string, Transaction[]>();
@@ -1119,7 +1019,7 @@ const isEdit = payload.id != null;
     if (source === "BITPANDA" && (code === "TRANSFER_IN" || code === "TRANSFER_OUT")) {
       const symbol = (tx.asset_symbol || "").toUpperCase();
       const amount = Math.abs(Number(tx.amount || 0));
-      const key = `${symbol}|${tx.timestamp}|${amount}`;
+      const key = `${symbol}|${amount}`;
       const group = grouped.get(key);
       if (group) {
         group.push(tx);
@@ -1132,54 +1032,97 @@ const isEdit = payload.id != null;
   }
 
   const merged: Transaction[] = [];
+  const maxDeltaMs = 60 * 1000;
 
   for (const group of grouped.values()) {
-    if (group.length !== 2) {
-      for (const tx of group) {
-        remaining.push(tx);
+    const pool = group.slice().sort((a, b) => {
+      const aTime = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+      const bTime = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+      const safeATime = Number.isFinite(aTime) ? aTime : 0;
+      const safeBTime = Number.isFinite(bTime) ? bTime : 0;
+      return safeATime - safeBTime;
+    });
+
+    const used = new Set<number>();
+
+    for (let i = 0; i < pool.length; i++) {
+      if (used.has(i)) {
+        continue;
       }
-      continue;
-    }
 
-    const a = group[0];
-    const b = group[1];
-    const typeA = (a.tx_type || "").toUpperCase();
-    const typeB = (b.tx_type || "").toUpperCase();
-    const isOpposite =
-      (typeA === "TRANSFER_IN" && typeB === "TRANSFER_OUT") ||
-      (typeA === "TRANSFER_OUT" && typeB === "TRANSFER_IN");
-
-    if (!isOpposite) {
-      for (const tx of group) {
-        remaining.push(tx);
+      const a = pool[i];
+      const typeA = (a.tx_type || "").toUpperCase();
+      if (typeA !== "TRANSFER_IN" && typeA !== "TRANSFER_OUT") {
+        remaining.push(a);
+        used.add(i);
+        continue;
       }
-      continue;
-    }
 
-    const base = typeA === "TRANSFER_OUT" ? a : b;
-    const noteParts: string[] = [];
-    if (a.note) {
-      noteParts.push(a.note);
-    }
-    if (b.note && b.note !== a.note) {
-      noteParts.push(b.note);
-    }
-    const combinedNote = noteParts.length > 0 ? noteParts.join(" | ") : undefined;
+      let bestIndex = -1;
+      let bestDelta = Number.POSITIVE_INFINITY;
 
-    const mergedTx: Transaction = {
-      ...base,
-      tx_type: "TRANSFER_INTERNAL",
-      amount: 0,
-      note: combinedNote,
-      tx_id: null,
-    };
+      for (let j = i + 1; j < pool.length; j++) {
+        if (used.has(j)) {
+          continue;
+        }
+        const b = pool[j];
+        const typeB = (b.tx_type || "").toUpperCase();
+        const isOpposite =
+          (typeA === "TRANSFER_IN" && typeB === "TRANSFER_OUT") ||
+          (typeA === "TRANSFER_OUT" && typeB === "TRANSFER_IN");
 
-    merged.push(mergedTx);
+        if (!isOpposite) {
+          continue;
+        }
+
+        const aTime = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+        const bTime = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+        const safeATime = Number.isFinite(aTime) ? aTime : 0;
+        const safeBTime = Number.isFinite(bTime) ? bTime : 0;
+        const delta = Math.abs(safeBTime - safeATime);
+
+        if (delta <= maxDeltaMs && delta < bestDelta) {
+          bestDelta = delta;
+          bestIndex = j;
+        }
+      }
+
+      if (bestIndex === -1) {
+        remaining.push(a);
+        used.add(i);
+        continue;
+      }
+
+      const b = pool[bestIndex];
+      used.add(i);
+      used.add(bestIndex);
+
+      const typeB = (b.tx_type || "").toUpperCase();
+      const base = typeA === "TRANSFER_OUT" ? a : b;
+
+      const noteParts: string[] = [];
+      if (a.note) {
+        noteParts.push(a.note);
+      }
+      if (b.note && b.note !== a.note) {
+        noteParts.push(b.note);
+      }
+      const combinedNote = noteParts.length > 0 ? noteParts.join(" | ") : undefined;
+
+      const mergedTx: Transaction = {
+        ...base,
+        tx_type: "TRANSFER_INTERNAL",
+        amount: 0,
+        note: combinedNote,
+        tx_id: null,
+      };
+
+      merged.push(mergedTx);
+    }
   }
 
   return remaining.concat(merged);
 }
-
 async importBitpandaCsv(lang: Language, file: File): Promise<CsvImportResult> {
     const text = await file.text();
     const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
@@ -1598,7 +1541,6 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
     const headerYStart = marginTop + 16;
     let y = headerYStart;
 
-    const colId = t(lang, "pdf_col_id");
     const colTime = t(lang, "pdf_col_time");
     const colAsset = t(lang, "pdf_col_asset");
     const colType = t(lang, "pdf_col_type");
@@ -1611,7 +1553,6 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
     const colNote = t(lang, "pdf_col_note");
 
     const headers = [
-      colId,
       colTime,
       colAsset,
       colType,
@@ -1626,7 +1567,6 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
 
     const txIdLinks: (string | null)[] = [];
     const rows: string[][] = txs.map((tx) => {
-      const idStr = typeof tx.id === "number" ? String(tx.id) : "";
       const timeStr = tx.timestamp
         ? tx.timestamp.substring(0, 19).replace("T", " ")
         : "";
@@ -1675,7 +1615,6 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
       txIdLinks.push(txExplorerUrl);
 
       return [
-        idStr,
         timeStr,
         tx.asset_symbol ?? "",
         formatTxTypeForPdf(tx.tx_type),
@@ -1690,7 +1629,7 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
     });
 
     const colCount = headers.length;
-    const wrapColumns = new Set<number>([8, 9, 10]); // source, txId, note
+    const wrapColumns = new Set<number>([7, 8, 9]); // source, txId, note
 
     const charWidths: number[] = [];
     for (let col = 0; col < colCount; col++) {
@@ -1706,26 +1645,24 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
       // Amount and value get a bit more room for readability.
       let maxCap: number;
       if (col === 0) {
-        maxCap = 8;
-      } else if (col === 1) {
         // time
         maxCap = 16;
-      } else if (col === 3) {
+      } else if (col === 2) {
         // type (can be quite narrow because it is always broken into two lines)
         maxCap = 10;
-      } else if (col === 4 || col === 6) {
+      } else if (col === 3 || col === 5) {
         // amount, value - give these a bit more space
         maxCap = 26;
-      } else if (col === 5) {
+      } else if (col === 4) {
         // price
         maxCap = 22;
-      } else if (col === 8) {
+      } else if (col === 7) {
         // Source: wrap earlier to avoid pushing the note too far
         maxCap = 20;
-      } else if (col === 9) {
+      } else if (col === 8) {
         // TX-ID: wrap earlier so hashes/ids do not stretch the layout
         maxCap = 18;
-      } else if (col === 10) {
+      } else if (col === 9) {
         // Note: wrap earlier so the column does not dominate the width
         maxCap = 16;
       } else if (wrapColumns.has(col)) {
@@ -1834,8 +1771,8 @@ wrapped.forEach((lines, idx) => {
   for (const line of lines) {
     doc.text(String(line), cellX, lineY);
 
-    // Add an invisible clickable link for the TX-ID column (column index 9)
-    if (idx === 9) {
+    // Add an invisible clickable link for the TX-ID column (column index 8)
+    if (idx === 8) {
       const link = txIdLinks[rowIndex] || null;
       if (link && line === lines[0]) {
         const cellWidth = colWidths[idx] - 2;
