@@ -758,7 +758,7 @@ class LocalDataSource implements PortfolioDataSource {
           fiat_currency: record["fiat_currency"] || "EUR",
           timestamp: record["timestamp"],
           source: record["source"] || null,
-          note: note || null,
+          note: note || undefined,
           tx_id: record["tx_id"] || null,
           fiat_value: fiatValue,
           value_eur: valueEur,
@@ -1141,7 +1141,7 @@ class LocalDataSource implements PortfolioDataSource {
         directionLabel = "IN";
       }
 
-      let extraNote: string | null = null;
+      let extraNote: string | undefined;
       if (isStakeLike) {
         const baseStakeLabel = isStakeOut ? "Internal unstaking transfer" : "Internal staking transfer";
         extraNote = baseStakeLabel;
