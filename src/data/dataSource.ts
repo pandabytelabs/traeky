@@ -1444,8 +1444,6 @@ if (taxFiat) {
 }
 if (feeParts.length > 0) {
   note += ` [${feeParts.join(", ")}]`;
-} else {
-  note = "";
 }
 
 const txId = (record["Transaction ID"] || "").trim() || null;
