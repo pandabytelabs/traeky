@@ -568,14 +568,15 @@ body {
 
 .tx-table th:nth-child(1),
 .tx-table td:nth-child(1) {
-  min-width: 2.5rem;
-  max-width: 3.5rem;
+  min-width: 2rem;
+  max-width: 2.75rem;
   text-align: right;
 }
 
 .tx-table th:nth-child(2),
 .tx-table td:nth-child(2) {
-  min-width: 4rem;
+  min-width: 3.25rem;
+  max-width: 5rem;
 }
 
 .tx-table th:nth-child(3),

@@ -1553,9 +1553,9 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
     const tzDate = new Date();
     const dateStr = tzDate.toISOString().slice(0, 10);
 
-    const marginLeft = 14;
-    const marginTop = 20;
-    const marginBottom = 20;
+    const marginLeft = 10;
+    const marginTop = 12;
+    const marginBottom = 12;
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
     const usableWidth = pageWidth - marginLeft * 2;
