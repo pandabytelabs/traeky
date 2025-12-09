@@ -257,6 +257,7 @@ export function computeLocalHoldings(transactions: Transaction[]): HoldingsRespo
     const txType = (tx.tx_type || "").toUpperCase();
     const amount = Number(tx.amount || 0);
     if (!Number.isFinite(amount) || amount === 0) continue;
+    if (txType === "TRANSFER_INTERNAL") continue;
 
     let sign = 1;
     if (txType === "SELL" || txType === "TRANSFER_OUT") {
@@ -757,7 +758,7 @@ class LocalDataSource implements PortfolioDataSource {
           fiat_currency: record["fiat_currency"] || "EUR",
           timestamp: record["timestamp"],
           source: record["source"] || null,
-          note: record["note"] || null,
+          note: note || null,
           tx_id: record["tx_id"] || null,
           fiat_value: fiatValue,
           value_eur: valueEur,
@@ -1165,7 +1166,7 @@ class LocalDataSource implements PortfolioDataSource {
       const mergedTx: Transaction = {
         ...base,
         tx_type: "TRANSFER_INTERNAL",
-        amount: 0,
+        amount: amountAbs,
         note: finalNote,
         tx_id: null,
       };
