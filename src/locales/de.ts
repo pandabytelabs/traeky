@@ -115,6 +115,7 @@ export const de: Record<string, string> = {
   pdf_col_amount: "Menge",
 pdf_col_id: "ID",
   pdf_col_asset: "Asset",
+  pdf_col_chain: "Kette",
   pdf_col_currency: "Währung",
   pdf_col_note: "Notiz",
   pdf_col_price: "Preis",

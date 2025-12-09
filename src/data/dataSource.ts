@@ -1600,6 +1600,7 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
 
     const colTime = t(lang, "pdf_col_time");
     const colAsset = t(lang, "pdf_col_asset");
+    const colChain = t(lang, "pdf_col_chain");
     const colType = t(lang, "pdf_col_type");
     const colAmount = t(lang, "pdf_col_amount");
     const colPrice = t(lang, "pdf_col_price");
@@ -1612,6 +1613,7 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
     const headers = [
       colTime,
       colAsset,
+      colChain,
       colType,
       colAmount,
       colPrice,
@@ -1665,6 +1667,14 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
       const valueStr =
         totalValue != null ? formatNumber(totalValue) : "";
       const curStr = baseCurrency;
+      const chainParts: string[] = [];
+      if (typeof tx.linked_tx_prev_id === "number") {
+        chainParts.push(`Prev:${tx.linked_tx_prev_id}`);
+      }
+      if (typeof tx.linked_tx_next_id === "number") {
+        chainParts.push(`Next:${tx.linked_tx_next_id}`);
+      }
+      const chainStr = chainParts.length > 0 ? chainParts.join(" ") : "–";
       const sourceStr = tx.source ?? "";
       const txIdStr = tx.tx_id ?? "";
       const noteStr = tx.note ?? "";
@@ -1674,6 +1684,7 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
       return [
         timeStr,
         tx.asset_symbol ?? "",
+        chainStr,
         formatTxTypeForPdf(tx.tx_type),
         amountStr,
         priceStr,
@@ -1686,7 +1697,7 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
     });
 
     const colCount = headers.length;
-    const wrapColumns = new Set<number>([7, 8, 9]); // source, txId, note
+    const wrapColumns = new Set<number>([8, 9, 10]); // source, txId, note
 
     const charWidths: number[] = [];
     for (let col = 0; col < colCount; col++) {
@@ -1702,25 +1713,18 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
       // Amount and value get a bit more room for readability.
       let maxCap: number;
       if (col === 0) {
-        // time
         maxCap = 16;
-      } else if (col === 2) {
-        // type (can be quite narrow because it is always broken into two lines)
+      } else if (col === 3) {
         maxCap = 10;
-      } else if (col === 3 || col === 5) {
-        // amount, value - give these a bit more space
+      } else if (col === 4 || col === 6) {
         maxCap = 26;
-      } else if (col === 4) {
-        // price
+      } else if (col === 5) {
         maxCap = 22;
-      } else if (col === 7) {
-        // Source: wrap earlier to avoid pushing the note too far
-        maxCap = 20;
       } else if (col === 8) {
-        // TX-ID: wrap earlier so hashes/ids do not stretch the layout
-        maxCap = 18;
+        maxCap = 20;
       } else if (col === 9) {
-        // Note: wrap earlier so the column does not dominate the width
+        maxCap = 18;
+      } else if (col === 10) {
         maxCap = 16;
       } else if (wrapColumns.has(col)) {
         maxCap = 20;
@@ -1749,7 +1753,7 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
       }
     }
     const extraGapBetweenCurAndSource = 6;
-    for (let i = 7; i < colX.length; i++) {
+    for (let i = 8; i < colX.length; i++) {
       colX[i] += extraGapBetweenCurAndSource;
     }
 
@@ -1786,7 +1790,7 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
           return [""];
         }
         const baseParts = raw.split("\n");
-        if (idx === 2) {
+        if (idx === 3) {
           const cellWidth = colWidths[idx] - 2;
           const width = cellWidth > 0 ? cellWidth : 1;
           const lines: string[] = [];
@@ -1827,7 +1831,7 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
         (max, lines) => (lines.length > max ? lines.length : max),
         1,
       );
-      const rowHeight = maxLines * lineHeight + 2;
+      const rowHeight = maxLines * lineHeight + 3;
 
       // Page break if needed
       if (y + rowHeight > pageHeight - marginBottom) {
@@ -1851,8 +1855,8 @@ wrapped.forEach((lines, idx) => {
   for (const line of lines) {
     doc.text(String(line), cellX, lineY);
 
-    // Add an invisible clickable link for the TX-ID column (column index 8)
-    if (idx === 8) {
+    // Add an invisible clickable link for the TX-ID column (column index 9)
+    if (idx === 9) {
       const link = txIdLinks[rowIndex] || null;
       if (link && line === lines[0]) {
         const cellWidth = colWidths[idx] - 2;

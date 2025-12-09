@@ -115,6 +115,7 @@ export const en: Record<string, string> = {
   pdf_col_amount: "Amount",
 pdf_col_id: "ID",
   pdf_col_asset: "Asset",
+  pdf_col_chain: "Chain",
   pdf_col_currency: "Currency",
   pdf_col_note: "Note",
   pdf_col_price: "Price",
