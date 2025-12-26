@@ -1948,9 +1948,9 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
       if (col === 0) {
         maxCap = 7; // ID
       } else if (col === 1) {
-        maxCap = 10; // Chain
+        maxCap = 11; // Chain
       } else if (col === 2) {
-        maxCap = 16; // Time
+        maxCap = 14; // Time
       } else if (col === 3) {
         maxCap = 12; // Asset
       } else if (col === 4) {
