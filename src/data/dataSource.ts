@@ -1860,6 +1860,7 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
 
     const headers = [
       colId,
+      colChain,
       colTime,
       colAsset,
       colType,
@@ -1868,11 +1869,11 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
       colValue,
       colCur,
       colSource,
-      colChain,
       colTxId,
       colNote,
     ];
 
+    // Keep link targets in a separate array so we can create clickable areas on TX-ID cells.
     const txIdLinks: (string | null)[] = [];
     const rows: string[][] = txs.map((tx) => {
       const timeStr = tx.timestamp
@@ -1926,17 +1927,19 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
       const idStr = tx.id != null ? String(tx.id) : "";
       const chainParts: string[] = [];
       if (typeof tx.linked_tx_prev_id === "number") {
-        chainParts.push(`Prev: ${tx.linked_tx_prev_id}`);
+        chainParts.push(`Prev:${tx.linked_tx_prev_id}`);
       }
       if (typeof tx.linked_tx_next_id === "number") {
-        chainParts.push(`Next: ${tx.linked_tx_next_id}`);
+        chainParts.push(`Next:${tx.linked_tx_next_id}`);
       }
-      const chainStr = chainParts.length > 0 ? chainParts.join(" | ") : "–";
+      // Use explicit line breaks to keep the "Chain" column narrow.
+      const chainStr = chainParts.length > 0 ? chainParts.join("\n") : "–";
 
       const noteStr = tx.note || "";
 
       return [
         idStr,
+        chainStr,
         timeStr,
         tx.asset_symbol ?? "",
         formatTxTypeForPdf(tx.tx_type),
@@ -1945,14 +1948,29 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
         valueStr,
         curStr,
         sourceStr,
-        chainStr,
         txIdStr,
         noteStr,
       ];
     });
 
     const colCount = headers.length;
-    const wrapColumns = new Set<number>([8, 9, 10, 11]);
+
+    // Column indices after re-ordering (kept explicit so we do not depend on translations).
+    const chainColIndex = 1;
+    const timeColIndex = 2;
+    const typeColIndex = 4;
+    const currencyColIndex = 8;
+    const sourceColIndex = 9;
+    const txIdColIndex = 10;
+    const noteColIndex = 11;
+
+    // Wrap long/free-text columns to ensure the table fits in landscape A4.
+    const wrapColumns = new Set<number>([
+      chainColIndex,
+      sourceColIndex,
+      txIdColIndex,
+      noteColIndex,
+    ]);
 
     const charWidths: number[] = [];
     for (let col = 0; col < colCount; col++) {
@@ -1968,25 +1986,36 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
       // Amount and value get a bit more room for readability.
       let maxCap: number;
       if (col === 0) {
+        // ID
         maxCap = 7;
-      } else if (col === 1) {
+      } else if (col === chainColIndex) {
+        // Chain (kept narrow; values may wrap)
+        maxCap = 12;
+      } else if (col === timeColIndex) {
         maxCap = 16;
       } else if (col === 3) {
+        // Asset
         maxCap = 10;
-      } else if (col === 4 || col === 6) {
-        maxCap = 26;
-      } else if (col === 5) {
+      } else if (col === typeColIndex) {
+        // Type (often uses manual line breaks)
+        maxCap = 10;
+      } else if (col === 5 || col === 7) {
+        // Amount / Value
         maxCap = 22;
-      } else if (col === 8) {
+      } else if (col === 6) {
+        // Price
         maxCap = 20;
-      } else if (col === 9) {
-        maxCap = 18;
-      } else if (col === 10) {
-        maxCap = 18;
-      } else if (col === 11) {
+      } else if (col === currencyColIndex) {
+        // Currency (EUR/USD)
+        maxCap = 6;
+      } else if (col === sourceColIndex) {
         maxCap = 16;
+      } else if (col === txIdColIndex) {
+        maxCap = 18;
+      } else if (col === noteColIndex) {
+        maxCap = 18;
       } else if (wrapColumns.has(col)) {
-        maxCap = 20;
+        maxCap = 18;
       } else {
         maxCap = 18;
       }
@@ -1997,23 +2026,26 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
     }
 
     const baseCharWidth = 2.0;
-    const rawWidths = charWidths.map((len) => Math.max(12, len * baseCharWidth));
+    const rawWidths = charWidths.map((len, idx) => {
+      const minWidth = idx === currencyColIndex ? 8 : 12;
+      return Math.max(minWidth, len * baseCharWidth);
+    });
+
+    const baseColGap = 1.6;
     const totalRawWidth = rawWidths.reduce((sum, w) => sum + w, 0);
-    const scale = totalRawWidth > usableWidth ? usableWidth / totalRawWidth : 1;
+    const totalRawWidthWithGaps = totalRawWidth + baseColGap * (colCount - 1);
+    const scale = totalRawWidthWithGaps > usableWidth ? usableWidth / totalRawWidthWithGaps : 1;
+
     const colWidths = rawWidths.map((w) => w * scale);
+    const colGap = baseColGap * scale;
 
     const colX: number[] = [];
     {
-      const colGap = 2;
       let acc = marginLeft;
       for (const w of colWidths) {
         colX.push(acc);
         acc += w + colGap;
       }
-    }
-    const extraGapBetweenCurAndSource = 6;
-    for (let i = 8; i < colX.length; i++) {
-      colX[i] += extraGapBetweenCurAndSource;
     }
 
     const tableFontSize = 9;
@@ -2029,7 +2061,8 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
     doc.setFont(tableFontFamily, "normal");
     y += lineHeight + 1;
 
-    let rowIndex = 0;
+    let globalRowIndex = 0;
+    let rowIndexOnPage = 0;
 
     const drawHeader = () => {
       doc.setFontSize(tableFontSize);
@@ -2048,10 +2081,8 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
         if (!text) {
           return [""];
         }
-        // For the type column we always respect manual line breaks
-        // so that values like "STAKING REWARD" or "TRANSFER (OUT)"
-        // can be split across two lines in a controlled way.
-        if (idx === 3) {
+        // For the type and chain columns we always respect manual line breaks.
+        if (idx === typeColIndex || idx === chainColIndex) {
           const parts = text.split("\n");
           return parts.length > 0 ? parts : [text];
         }
@@ -2071,48 +2102,48 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
 
       // Page break if needed
       if (y + rowHeight > pageHeight - marginBottom) {
-      doc.addPage("a4", "landscape");
+        doc.addPage("a4", "landscape");
         doc.setFontSize(tableFontSize);
         drawHeader();
-        rowIndex = 0;
+        rowIndexOnPage = 0;
       }
 
       // Zebra striping: even rows get a light grey background
-      if (rowIndex % 2 === 1) {
+      if (rowIndexOnPage % 2 === 1) {
         doc.setFillColor(240, 240, 240);
         doc.rect(marginLeft, y - lineHeight + 1, usableWidth, rowHeight, "F");
       }
 
       // Write cell texts
-wrapped.forEach((lines, idx) => {
-  const cellX = colX[idx] + 1;
-  let lineY = y;
+      wrapped.forEach((lines, idx) => {
+        const cellX = colX[idx] + 1;
+        let lineY = y;
 
-  for (const line of lines) {
-    doc.text(String(line), cellX, lineY);
+        for (const line of lines) {
+          doc.text(String(line), cellX, lineY);
 
-    // Add an invisible clickable link for the TX-ID column (column index 8)
-    if (idx === 10) {
-      const link = txIdLinks[rowIndex] || null;
-      if (link && line === lines[0]) {
-        const cellWidth = colWidths[idx] - 2;
-        const width = cellWidth > 0 ? cellWidth : 1;
-        const height = rowHeight - 2;
-        try {
-          doc.link(cellX, y, width, height, { url: link });
-        } catch {
-          // ignore link errors to avoid breaking PDF generation
+          // Add an invisible clickable link for the TX-ID column.
+          if (idx === txIdColIndex) {
+            const link = txIdLinks[globalRowIndex] || null;
+            if (link && line === lines[0]) {
+              const cellWidth = colWidths[idx] - 2;
+              const width = cellWidth > 0 ? cellWidth : 1;
+              const height = rowHeight - 2;
+              try {
+                doc.link(cellX, y, width, height, { url: link });
+              } catch {
+                // ignore link errors to avoid breaking PDF generation
+              }
+            }
+          }
+
+          lineY += lineHeight;
         }
-      }
-    }
-
-    lineY += lineHeight;
-  }
-});
-;
+      });
 
       y += rowHeight;
-      rowIndex += 1;
+      rowIndexOnPage += 1;
+      globalRowIndex += 1;
     }
 
     const disclaimer = t(lang, "pdf_disclaimer");
