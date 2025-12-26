@@ -1903,14 +1903,13 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
       txIdLinks.push(txExplorerUrl);
 
       const idStr = tx.id != null ? String(tx.id) : "";
-      const chainParts: string[] = [];
-      if (typeof tx.linked_tx_prev_id === "number") {
-        chainParts.push(`Prev: ${tx.linked_tx_prev_id}`);
-      }
-      if (typeof tx.linked_tx_next_id === "number") {
-        chainParts.push(`Next: ${tx.linked_tx_next_id}`);
-      }
-      const chainStr = chainParts.length > 0 ? chainParts.join(" | ") : "–";
+      // Display the transaction chain as two lines to save horizontal space.
+      // Prev is always shown under Next for readability and a predictable row height.
+      const nextStr =
+        typeof tx.linked_tx_next_id === "number" ? String(tx.linked_tx_next_id) : "–";
+      const prevStr =
+        typeof tx.linked_tx_prev_id === "number" ? String(tx.linked_tx_prev_id) : "–";
+      const chainStr = `Next: ${nextStr}\nPrev: ${prevStr}`;
 
       const noteStr = tx.note || "";
 
@@ -2053,10 +2052,10 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
         if (!text) {
           return [""];
         }
-        // For the type column we always respect manual line breaks
-        // so that values like "STAKING REWARD" or "TRANSFER (OUT)"
-        // can be split across two lines in a controlled way.
-        if (idx === 4) {
+        // For the Chain and Type columns we always respect manual line breaks.
+        // This keeps the table layout deterministic and avoids unintended wrapping.
+        // (Chain is formatted as exactly two lines: Next/Prev.)
+        if (idx === 1 || idx === 4) {
           const parts = text.split("\n");
           return parts.length > 0 ? parts : [text];
         }
