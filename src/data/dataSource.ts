@@ -268,8 +268,8 @@ function normalizeLinkedTransactionGraph(items: Transaction[]): boolean {
 
   // Sanitize references + remove dangling pointers.
   for (const tx of items) {
-    const prev = sanitizeLinkedTxId((tx as any).linked_tx_prev_id);
-    const next = sanitizeLinkedTxId((tx as any).linked_tx_next_id);
+		const prev = sanitizeLinkedTxId(tx.linked_tx_prev_id);
+		const next = sanitizeLinkedTxId(tx.linked_tx_next_id);
 
     if (tx.linked_tx_prev_id !== prev) {
       tx.linked_tx_prev_id = prev;
