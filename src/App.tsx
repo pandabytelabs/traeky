@@ -736,6 +736,12 @@ useEffect(() => {
     setEditingId(null);
   };
 
+  const closeTransactionForm = () => {
+    resetForm();
+    setError(null);
+    setShowTransactionForm(false);
+  };
+
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1987,7 +1993,11 @@ const handleReloadHoldingPrices = async () => {
                 <button
                   type="button"
                   className="btn-primary"
-                  onClick={() => setShowTransactionForm(true)}
+					  onClick={() => {
+					    setError(null);
+					    resetForm();
+					    setShowTransactionForm(true);
+					  }}
                 >
                   {t(lang, "tx_new_open_button")}
                 </button>
@@ -2467,6 +2477,7 @@ const handleReloadHoldingPrices = async () => {
                           type="button"
                           className="btn-secondary"
                           onClick={() => {
+							    setError(null);
                             setEditingId(tx.id);
                             setForm({
                               asset_symbol: tx.asset_symbol,
@@ -2597,6 +2608,7 @@ const handleReloadHoldingPrices = async () => {
                         type="button"
                         className="btn-secondary"
                         onClick={() => {
+							    setError(null);
                           const tx = transactions.find(
                             (t) => t.id === e.transaction_id
                           );
@@ -2711,10 +2723,7 @@ const handleReloadHoldingPrices = async () => {
             <button
               type="button"
               className="btn-icon-close"
-              onClick={() => {
-                resetForm();
-                setShowTransactionForm(false);
-              }}
+	              onClick={closeTransactionForm}
               aria-label={t(lang, "close_overlay")}
               title={t(lang, "close_overlay")}
             >
@@ -2853,7 +2862,7 @@ const handleReloadHoldingPrices = async () => {
                   <button
                     type="button"
                     className="btn-secondary"
-                    onClick={resetForm}
+	                    onClick={closeTransactionForm}
                   >
                     {t(lang, "close_overlay")}
                   </button>
