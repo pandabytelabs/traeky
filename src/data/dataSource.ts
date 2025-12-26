@@ -143,8 +143,6 @@ export interface PortfolioDataSource {
     source: string | null;
     note: string | null;
     tx_id: string | null;
-    linked_tx_prev_id?: number | null;
-    linked_tx_next_id?: number | null;
   }): Promise<void>;
 
   deleteTransaction(id: number): Promise<void>;
@@ -248,136 +246,6 @@ function getNextLocalId(): number {
     const maxId = items.reduce((acc, tx) => (tx.id && tx.id > acc ? tx.id : acc), 0);
     return maxId + 1;
   }
-}
-
-function sanitizeLinkedTxId(candidate: unknown): number | null {
-  if (typeof candidate !== "number") {
-    return null;
-  }
-  if (!Number.isFinite(candidate)) {
-    return null;
-  }
-  const id = Math.trunc(candidate);
-  return id > 0 ? id : null;
-}
-
-function buildTxIndex(items: Transaction[]): Map<number, Transaction> {
-  const map = new Map<number, Transaction>();
-  for (const tx of items) {
-    if (typeof tx.id === "number" && Number.isFinite(tx.id)) {
-      map.set(tx.id, tx);
-    }
-  }
-  return map;
-}
-
-/**
- * Ensures that linked_tx_prev_id / linked_tx_next_id are always consistent in both directions.
- *
- * Rules:
- * - Dangling references to missing tx ids are removed.
- * - If A.prev=B then B.next=A (and any displaced previous B.next is detached).
- * - If A.next=C then C.prev=A (and any displaced previous C.prev is detached).
- */
-function normalizeLinkedTransactionGraph(items: Transaction[]): boolean {
-  const map = buildTxIndex(items);
-  let changed = false;
-
-  const detachPrev = (txId: number, expectedPrev: number) => {
-    const tx = map.get(txId);
-    if (!tx) return;
-    if (tx.linked_tx_prev_id === expectedPrev) {
-      tx.linked_tx_prev_id = null;
-      changed = true;
-    }
-  };
-
-  const detachNext = (txId: number, expectedNext: number) => {
-    const tx = map.get(txId);
-    if (!tx) return;
-    if (tx.linked_tx_next_id === expectedNext) {
-      tx.linked_tx_next_id = null;
-      changed = true;
-    }
-  };
-
-  const setPrev = (txId: number, prevId: number) => {
-    const tx = map.get(txId);
-    if (!tx) return;
-    if (tx.linked_tx_prev_id !== prevId) {
-      tx.linked_tx_prev_id = prevId;
-      changed = true;
-    }
-  };
-
-  const setNext = (txId: number, nextId: number) => {
-    const tx = map.get(txId);
-    if (!tx) return;
-    if (tx.linked_tx_next_id !== nextId) {
-      tx.linked_tx_next_id = nextId;
-      changed = true;
-    }
-  };
-
-  // 1) Sanitize local pointers (remove obvious invalid references).
-  for (const tx of items) {
-    const id = sanitizeLinkedTxId(tx.id);
-    if (!id) continue;
-
-    let prevId = sanitizeLinkedTxId(tx.linked_tx_prev_id);
-    let nextId = sanitizeLinkedTxId(tx.linked_tx_next_id);
-
-    if (prevId === id) prevId = null;
-    if (nextId === id) nextId = null;
-    if (prevId != null && !map.has(prevId)) prevId = null;
-    if (nextId != null && !map.has(nextId)) nextId = null;
-    if (prevId != null && nextId != null && prevId === nextId) {
-      // Avoid self-contained 2-node loop on the same neighbor.
-      nextId = null;
-    }
-
-    if (tx.linked_tx_prev_id !== prevId) {
-      tx.linked_tx_prev_id = prevId;
-      changed = true;
-    }
-    if (tx.linked_tx_next_id !== nextId) {
-      tx.linked_tx_next_id = nextId;
-      changed = true;
-    }
-  }
-
-  // 2) Enforce bidirectional edges (stable order).
-  const ids = [...map.keys()].sort((a, b) => a - b);
-  for (const id of ids) {
-    const tx = map.get(id);
-    if (!tx) continue;
-
-    const prevId = sanitizeLinkedTxId(tx.linked_tx_prev_id);
-    if (prevId != null) {
-      const prevTx = map.get(prevId);
-      if (prevTx) {
-        const displaced = sanitizeLinkedTxId(prevTx.linked_tx_next_id);
-        if (displaced != null && displaced !== id) {
-          detachPrev(displaced, prevId);
-        }
-        setNext(prevId, id);
-      }
-    }
-
-    const nextId = sanitizeLinkedTxId(tx.linked_tx_next_id);
-    if (nextId != null) {
-      const nextTx = map.get(nextId);
-      if (nextTx) {
-        const displaced = sanitizeLinkedTxId(nextTx.linked_tx_prev_id);
-        if (displaced != null && displaced !== id) {
-          detachNext(displaced, nextId);
-        }
-        setPrev(nextId, id);
-      }
-    }
-  }
-
-  return changed;
 }
 
 
@@ -577,18 +445,6 @@ class LocalDataSource implements PortfolioDataSource {
     setCoingeckoApiKey(config.coingecko_api_key ?? null);
     const rawTxs = loadLocalTransactions();
 
-    // Repair legacy data where linked transactions were stored only one-way.
-    // Persist fixes so that subsequent edits don't reintroduce inconsistencies.
-    try {
-      const copy = [...rawTxs];
-      const changed = normalizeLinkedTransactionGraph(copy);
-      if (changed) {
-        saveLocalTransactions(copy);
-      }
-    } catch (err) {
-      console.warn("Failed to normalize linked transactions", err);
-    }
-
     const baseCurrency: "EUR" | "USD" =
       config.base_currency === "USD" ? "USD" : "EUR";
 
@@ -633,176 +489,90 @@ class LocalDataSource implements PortfolioDataSource {
     source: string | null;
     note: string | null;
     tx_id: string | null;
-    linked_tx_prev_id?: number | null;
-    linked_tx_next_id?: number | null;
   }): Promise<void> {
     const items = loadLocalTransactions();
-
-    const priceFiat = payload.price_fiat;
-    const fiatValue =
-      priceFiat != null && Number.isFinite(priceFiat)
-        ? priceFiat * payload.amount
-        : null;
-
     const isEdit = payload.id != null;
-    let txId: number;
-    let index = -1;
-    let oldPrev: number | null = null;
-    let oldNext: number | null = null;
 
     if (isEdit) {
-      index = items.findIndex((tx) => tx.id === payload.id);
-    }
+      const index = items.findIndex((tx) => tx.id === payload.id);
+      if (index !== -1) {
+        const priceFiat = payload.price_fiat;
+        const fiatValue =
+          priceFiat != null && Number.isFinite(priceFiat)
+            ? priceFiat * payload.amount
+            : null;
 
-    if (isEdit && index !== -1) {
-      txId = items[index].id;
-      oldPrev = sanitizeLinkedTxId(items[index].linked_tx_prev_id);
-      oldNext = sanitizeLinkedTxId(items[index].linked_tx_next_id);
+        items[index] = {
+          ...items[index],
+          asset_symbol: payload.asset_symbol,
+          tx_type: payload.tx_type,
+          amount: payload.amount,
+          price_fiat: priceFiat,
+          fiat_currency: payload.fiat_currency,
+          timestamp: payload.timestamp,
+          source: payload.source,
+          note: payload.note,
+          tx_id: payload.tx_id,
+          fiat_value: fiatValue,
+          // Leave value_eur/value_usd as-is or null; will be recomputed later.
+        };
+      } else {
+        // If not found, treat as new.
+        const id = getNextLocalId();
+        const priceFiat = payload.price_fiat;
+        const fiatValue =
+          priceFiat != null && Number.isFinite(priceFiat)
+            ? priceFiat * payload.amount
+            : null;
+
+        items.push({
+          id,
+          asset_symbol: payload.asset_symbol,
+          tx_type: payload.tx_type,
+          amount: payload.amount,
+          price_fiat: priceFiat,
+          fiat_currency: payload.fiat_currency,
+          timestamp: payload.timestamp,
+          source: payload.source,
+          note: payload.note,
+          tx_id: payload.tx_id,
+          fiat_value: fiatValue,
+          value_eur: null,
+          value_usd: null,
+        });
+      }
     } else {
-      txId = getNextLocalId();
+      const id = getNextLocalId();
+      const priceFiat = payload.price_fiat;
+      const fiatValue =
+        priceFiat != null && Number.isFinite(priceFiat)
+          ? priceFiat * payload.amount
+          : null;
+
+      items.push({
+        id,
+        asset_symbol: payload.asset_symbol,
+        tx_type: payload.tx_type,
+        amount: payload.amount,
+        price_fiat: priceFiat,
+        fiat_currency: payload.fiat_currency,
+        timestamp: payload.timestamp,
+        source: payload.source,
+        note: payload.note,
+        tx_id: payload.tx_id,
+        fiat_value: fiatValue,
+        value_eur: null,
+        value_usd: null,
+      });
     }
 
-    let newPrev = sanitizeLinkedTxId(payload.linked_tx_prev_id);
-    let newNext = sanitizeLinkedTxId(payload.linked_tx_next_id);
-    if (newPrev === txId) newPrev = null;
-    if (newNext === txId) newNext = null;
-    if (newPrev != null && newNext != null && newPrev === newNext) {
-      // Avoid ambiguous linking to the same neighbor for both sides.
-      newNext = null;
-    }
-
-    const upsert: Transaction = {
-      id: txId,
-      asset_symbol: payload.asset_symbol,
-      tx_type: payload.tx_type,
-      amount: payload.amount,
-      price_fiat: priceFiat,
-      fiat_currency: payload.fiat_currency,
-      timestamp: payload.timestamp,
-      source: payload.source,
-      note: payload.note,
-      tx_id: payload.tx_id,
-      linked_tx_prev_id: newPrev,
-      linked_tx_next_id: newNext,
-      fiat_value: fiatValue,
-      // Leave value_eur/value_usd as-is or null; will be recomputed later.
-      value_eur: null,
-      value_usd: null,
-    };
-
-    if (isEdit && index !== -1) {
-      items[index] = {
-        ...items[index],
-        ...upsert,
-        // Preserve computed values unless the user overwrote them via import.
-        value_eur: items[index].value_eur ?? null,
-        value_usd: items[index].value_usd ?? null,
-      };
-    } else {
-      items.push(upsert);
-      oldPrev = null;
-      oldNext = null;
-    }
-
-    // Targeted reconciliation for the edited/created transaction.
-    const map = buildTxIndex(items);
-    const detachIfMatched = (
-      neighborId: number | null,
-      field: "linked_tx_prev_id" | "linked_tx_next_id",
-    ) => {
-      if (neighborId == null) return;
-      const tx = map.get(neighborId);
-      if (!tx) return;
-      const current = sanitizeLinkedTxId(tx[field]);
-      if (current === txId) {
-        tx[field] = null;
-      }
-    };
-
-    // If this tx is re-linked, detach previous neighbors that pointed to it.
-    if (oldPrev != null && oldPrev !== newPrev) {
-      detachIfMatched(oldPrev, "linked_tx_next_id");
-    }
-    if (oldNext != null && oldNext !== newNext) {
-      detachIfMatched(oldNext, "linked_tx_prev_id");
-    }
-
-    // Attach new neighbors (and detach any displaced links on the neighbor side).
-    if (newPrev != null) {
-      const prevTx = map.get(newPrev);
-      if (prevTx) {
-        const displaced = sanitizeLinkedTxId(prevTx.linked_tx_next_id);
-        if (displaced != null && displaced !== txId) {
-          const displacedTx = map.get(displaced);
-          if (displacedTx && sanitizeLinkedTxId(displacedTx.linked_tx_prev_id) === newPrev) {
-            displacedTx.linked_tx_prev_id = null;
-          }
-        }
-        prevTx.linked_tx_next_id = txId;
-      }
-    }
-
-    if (newNext != null) {
-      const nextTx = map.get(newNext);
-      if (nextTx) {
-        const displaced = sanitizeLinkedTxId(nextTx.linked_tx_prev_id);
-        if (displaced != null && displaced !== txId) {
-          const displacedTx = map.get(displaced);
-          if (displacedTx && sanitizeLinkedTxId(displacedTx.linked_tx_next_id) === newNext) {
-            displacedTx.linked_tx_next_id = null;
-          }
-        }
-        nextTx.linked_tx_prev_id = txId;
-      }
-    }
-
-    // Final safety pass to prevent dangling or one-way links.
-    normalizeLinkedTransactionGraph(items);
-    // Links coming from CSV may be incomplete or one-way. Normalize so that the
-    // chain representation is consistent.
-    normalizeLinkedTransactionGraph(items);
     saveLocalTransactions(items);
   }
 
   async deleteTransaction(id: number): Promise<void> {
     const items = loadLocalTransactions();
-    const index = items.findIndex((tx) => tx.id === id);
-    if (index === -1) {
-      return;
-    }
-
-    const target = items[index];
-    const prevId = sanitizeLinkedTxId(target.linked_tx_prev_id);
-    const nextId = sanitizeLinkedTxId(target.linked_tx_next_id);
-
-    // Remove the transaction itself.
-    items.splice(index, 1);
-
-    const map = buildTxIndex(items);
-    const prevTx = prevId != null ? map.get(prevId) : undefined;
-    const nextTx = nextId != null ? map.get(nextId) : undefined;
-
-    // Prefer to keep the chain intact when removing the middle of a consistent chain.
-    const canBridge =
-      prevTx &&
-      nextTx &&
-      sanitizeLinkedTxId(prevTx.linked_tx_next_id) === id &&
-      sanitizeLinkedTxId(nextTx.linked_tx_prev_id) === id;
-
-    if (canBridge) {
-      prevTx.linked_tx_next_id = nextId;
-      nextTx.linked_tx_prev_id = prevId;
-    } else {
-      if (prevTx && sanitizeLinkedTxId(prevTx.linked_tx_next_id) === id) {
-        prevTx.linked_tx_next_id = null;
-      }
-      if (nextTx && sanitizeLinkedTxId(nextTx.linked_tx_prev_id) === id) {
-        nextTx.linked_tx_prev_id = null;
-      }
-    }
-
-    normalizeLinkedTransactionGraph(items);
-    saveLocalTransactions(items);
+    const filtered = items.filter((tx) => tx.id !== id);
+    saveLocalTransactions(filtered);
   }
 
   async importCsv(lang: Language, file: File): Promise<CsvImportResult> {
@@ -979,18 +749,6 @@ class LocalDataSource implements PortfolioDataSource {
           }
         }
 
-        let linkedPrevId: number | null = null;
-        if (record["linked_tx_prev_id"]) {
-          const parsed = parseInt(record["linked_tx_prev_id"].trim(), 10);
-          linkedPrevId = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-        }
-
-        let linkedNextId: number | null = null;
-        if (record["linked_tx_next_id"]) {
-          const parsed = parseInt(record["linked_tx_next_id"].trim(), 10);
-          linkedNextId = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-        }
-
         const tx: Transaction = {
           id,
           asset_symbol: (record["asset_symbol"] || "").toUpperCase(),
@@ -1002,8 +760,6 @@ class LocalDataSource implements PortfolioDataSource {
           source: record["source"] || null,
           note: record["note"] || null,
           tx_id: record["tx_id"] || null,
-          linked_tx_prev_id: linkedPrevId,
-          linked_tx_next_id: linkedNextId,
           fiat_value: fiatValue,
           value_eur: valueEur,
           value_usd: valueUsd,
@@ -1020,7 +776,6 @@ class LocalDataSource implements PortfolioDataSource {
         items.push(tx);
         existingKeys.add(key);
         importedKeys.add(key);
-        importedCount += 1;
       } catch {
         errors.push(
           `${t(lang, "csv_import_error_line_prefix")} ${lineIndex + 1}: ${t(lang, "csv_import_unknown_error")}`,
@@ -1028,7 +783,6 @@ class LocalDataSource implements PortfolioDataSource {
       }
     }
 
-    normalizeLinkedTransactionGraph(items);
     saveLocalTransactions(items);
 
     return {
@@ -1231,7 +985,6 @@ class LocalDataSource implements PortfolioDataSource {
         items.push(tx);
         existingKeys.add(key);
         importedKeys.add(key);
-        importedCount += 1;
       } catch (err) {
         console.error("Failed to import Binance row", err);
         const msg = err instanceof Error ? err.message : String(err);
@@ -1873,7 +1626,6 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
       colNote,
     ];
 
-    // Keep link targets in a separate array so we can create clickable areas on TX-ID cells.
     const txIdLinks: (string | null)[] = [];
     const rows: string[][] = txs.map((tx) => {
       const timeStr = tx.timestamp
@@ -1927,13 +1679,12 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
       const idStr = tx.id != null ? String(tx.id) : "";
       const chainParts: string[] = [];
       if (typeof tx.linked_tx_prev_id === "number") {
-        chainParts.push(`Prev:${tx.linked_tx_prev_id}`);
+        chainParts.push(`Prev: ${tx.linked_tx_prev_id}`);
       }
       if (typeof tx.linked_tx_next_id === "number") {
-        chainParts.push(`Next:${tx.linked_tx_next_id}`);
+        chainParts.push(`Next: ${tx.linked_tx_next_id}`);
       }
-      // Use explicit line breaks to keep the "Chain" column narrow.
-      const chainStr = chainParts.length > 0 ? chainParts.join("\n") : "–";
+      const chainStr = chainParts.length > 0 ? chainParts.join(" | ") : "–";
 
       const noteStr = tx.note || "";
 
@@ -1954,23 +1705,7 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
     });
 
     const colCount = headers.length;
-
-    // Column indices after re-ordering (kept explicit so we do not depend on translations).
-    const chainColIndex = 1;
-    const timeColIndex = 2;
-    const typeColIndex = 4;
-    const currencyColIndex = 8;
-    const sourceColIndex = 9;
-    const txIdColIndex = 10;
-    const noteColIndex = 11;
-
-    // Wrap long/free-text columns to ensure the table fits in landscape A4.
-    const wrapColumns = new Set<number>([
-      chainColIndex,
-      sourceColIndex,
-      txIdColIndex,
-      noteColIndex,
-    ]);
+    const wrapColumns = new Set<number>([1, 9, 10, 11]);
 
     const charWidths: number[] = [];
     for (let col = 0; col < colCount; col++) {
@@ -1986,34 +1721,27 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
       // Amount and value get a bit more room for readability.
       let maxCap: number;
       if (col === 0) {
-        // ID
-        maxCap = 7;
-      } else if (col === chainColIndex) {
-        // Chain (kept narrow; values may wrap)
-        maxCap = 12;
-      } else if (col === timeColIndex) {
-        maxCap = 16;
+        maxCap = 7; // ID
+      } else if (col === 1) {
+        maxCap = 14; // Chain (wraps)
+      } else if (col === 2) {
+        maxCap = 16; // Time
       } else if (col === 3) {
-        // Asset
-        maxCap = 10;
-      } else if (col === typeColIndex) {
-        // Type (often uses manual line breaks)
-        maxCap = 10;
+        maxCap = 12; // Asset
+      } else if (col === 4) {
+        maxCap = 10; // Type
       } else if (col === 5 || col === 7) {
-        // Amount / Value
-        maxCap = 22;
+        maxCap = 26; // Amount / Value
       } else if (col === 6) {
-        // Price
-        maxCap = 20;
-      } else if (col === currencyColIndex) {
-        // Currency (EUR/USD)
-        maxCap = 6;
-      } else if (col === sourceColIndex) {
-        maxCap = 16;
-      } else if (col === txIdColIndex) {
-        maxCap = 18;
-      } else if (col === noteColIndex) {
-        maxCap = 18;
+        maxCap = 22; // Price
+      } else if (col === 8) {
+        maxCap = 10; // Currency
+      } else if (col === 9) {
+        maxCap = 18; // Source
+      } else if (col === 10) {
+        maxCap = 18; // TX-ID
+      } else if (col === 11) {
+        maxCap = 16; // Note
       } else if (wrapColumns.has(col)) {
         maxCap = 18;
       } else {
@@ -2026,33 +1754,27 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
     }
 
     const baseCharWidth = 2.0;
-    const rawWidths = charWidths.map((len, idx) => {
-      const minWidth = idx === currencyColIndex ? 8 : 12;
-      return Math.max(minWidth, len * baseCharWidth);
-    });
-
-    // Default spacing between columns (in pseudo-pt). We apply per-gap adjustments
-    // to avoid wasting space in compact columns while keeping enough air between
-    // visually dense columns.
-    const baseColGap = 1.6;
-
-    // gapFactors[i] applies to the gap between column i and i+1.
-    // - Slightly tighter between ID and Chain.
-    // - Much tighter between Chain and Time.
-    // - Slightly more space between Currency and Source.
-    const gapFactors = new Array<number>(colCount - 1).fill(1);
-    gapFactors[0] = 0.85; // ID -> Chain
-    gapFactors[1] = 0.45; // Chain -> Time
-    gapFactors[currencyColIndex] = 1.35; // Currency -> Source
-
-    const rawGaps = gapFactors.map((f) => baseColGap * f);
+    const rawWidths = charWidths.map((len) => Math.max(12, len * baseCharWidth));
     const totalRawWidth = rawWidths.reduce((sum, w) => sum + w, 0);
-    const totalRawGaps = rawGaps.reduce((sum, g) => sum + g, 0);
-    const totalRawWidthWithGaps = totalRawWidth + totalRawGaps;
-    const scale = totalRawWidthWithGaps > usableWidth ? usableWidth / totalRawWidthWithGaps : 1;
 
+    // Column spacing (in pt/mm units used by jsPDF). We intentionally keep these small because
+    // the table is already dense. Gaps are part of the total layout width and must be considered
+    // when we scale columns to the page.
+    const defaultGap = 2;
+    const colGaps: number[] = new Array(Math.max(0, colCount - 1)).fill(defaultGap);
+    // Fine tuning:
+    // - ID ↔ Chain: slightly tighter
+    // - Chain ↔ Time: tighter
+    // - Currency ↔ Source: a bit more breathing room
+    if (colGaps.length >= 1) colGaps[0] = 1.5;
+    if (colGaps.length >= 2) colGaps[1] = 1.5;
+    if (colGaps.length >= 9) colGaps[8] = 2.6;
+
+    const totalGaps = colGaps.reduce((sum, g) => sum + g, 0);
+    const usableWidthForCols = Math.max(10, usableWidth - totalGaps);
+
+    const scale = totalRawWidth > usableWidthForCols ? usableWidthForCols / totalRawWidth : 1;
     const colWidths = rawWidths.map((w) => w * scale);
-    const colGaps = rawGaps.map((g) => g * scale);
 
     const colX: number[] = [];
     {
@@ -2077,7 +1799,6 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
     y += lineHeight + 1;
 
     let globalRowIndex = 0;
-    let rowIndexOnPage = 0;
 
     const drawHeader = () => {
       doc.setFontSize(tableFontSize);
@@ -2096,8 +1817,10 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
         if (!text) {
           return [""];
         }
-        // For the type and chain columns we always respect manual line breaks.
-        if (idx === typeColIndex || idx === chainColIndex) {
+        // For the type column we always respect manual line breaks
+        // so that values like "STAKING REWARD" or "TRANSFER (OUT)"
+        // can be split across two lines in a controlled way.
+        if (idx === 4) {
           const parts = text.split("\n");
           return parts.length > 0 ? parts : [text];
         }
@@ -2120,11 +1843,10 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
         doc.addPage("a4", "landscape");
         doc.setFontSize(tableFontSize);
         drawHeader();
-        rowIndexOnPage = 0;
       }
 
       // Zebra striping: even rows get a light grey background
-      if (rowIndexOnPage % 2 === 1) {
+      if (globalRowIndex % 2 === 1) {
         doc.setFillColor(240, 240, 240);
         doc.rect(marginLeft, y - lineHeight + 1, usableWidth, rowHeight, "F");
       }
@@ -2137,8 +1859,8 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
         for (const line of lines) {
           doc.text(String(line), cellX, lineY);
 
-          // Add an invisible clickable link for the TX-ID column.
-          if (idx === txIdColIndex) {
+          // Add an invisible clickable link for the TX-ID column (column index 10)
+          if (idx === 10) {
             const link = txIdLinks[globalRowIndex] || null;
             if (link && line === lines[0]) {
               const cellWidth = colWidths[idx] - 2;
@@ -2157,7 +1879,6 @@ if (txType === "TRANSFER_IN" || txType === "TRANSFER_OUT") {
       });
 
       y += rowHeight;
-      rowIndexOnPage += 1;
       globalRowIndex += 1;
     }
 
