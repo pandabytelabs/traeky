@@ -1,0 +1,161 @@
+name: Publish containers
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'push')) }}
+    runs-on: ubuntu-latest
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+    steps:
+      - name: Resolve publish channel
+        id: publish
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          publish=false
+          branch="${GITHUB_REF_NAME:-}"
+          commit="${GITHUB_SHA}"
+          channel=""
+          tags=""
+
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            commit="${{ github.event.workflow_run.head_sha }}"
+            workflow_event="${{ github.event.workflow_run.event }}"
+
+            if [[ "${workflow_event}" == "pull_request" ]]; then
+              branch="$(jq -r '.workflow_run.pull_requests[0].base.ref // ""' "$GITHUB_EVENT_PATH")"
+            else
+              branch="${{ github.event.workflow_run.head_branch }}"
+            fi
+          fi
+
+          case "${branch}" in
+            main)
+              publish=true
+              channel="stable"
+              tags="latest stable"
+              ;;
+            develop)
+              publish=true
+              channel="dev"
+              tags="dev"
+              ;;
+            *)
+              echo "No Docker publish channel for branch '${branch}'."
+              ;;
+          esac
+
+          {
+            echo "publish=${publish}"
+            echo "branch=${branch}"
+            echo "commit=${commit}"
+            echo "channel=${channel}"
+            echo 'tag_rules<<EOF_TAG_RULES'
+            if [[ "${publish}" == "true" ]]; then
+              for tag in ${tags}; do
+                echo "type=raw,value=${tag}"
+              done
+              echo "type=sha,prefix=sha-"
+            fi
+            echo 'EOF_TAG_RULES'
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v6
+        if: ${{ steps.publish.outputs.publish == 'true' }}
+        with:
+          ref: ${{ steps.publish.outputs.commit }}
+      - uses: docker/setup-buildx-action@v4
+        if: ${{ steps.publish.outputs.publish == 'true' }}
+      - uses: docker/login-action@v4
+        if: ${{ steps.publish.outputs.publish == 'true' }}
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check Docker Hub configuration
+        if: ${{ steps.publish.outputs.publish == 'true' }}
+        id: dockerhub
+        shell: bash
+        run: |
+          if [[ -n "${DOCKERHUB_USERNAME}" && -n "${DOCKERHUB_TOKEN}" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Login to Docker Hub
+        if: ${{ steps.publish.outputs.publish == 'true' && steps.dockerhub.outputs.enabled == 'true' }}
+        uses: docker/login-action@v4
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
+      - name: Resolve image names
+        if: ${{ steps.publish.outputs.publish == 'true' }}
+        id: images
+        shell: bash
+        run: |
+          {
+            echo 'dashboard<<EOF'
+            echo "ghcr.io/${GITHUB_REPOSITORY}-dashboard"
+            if [[ "${{ steps.dockerhub.outputs.enabled }}" == 'true' ]]; then
+              echo "${DOCKERHUB_USERNAME}/traeky-dashboard"
+            fi
+            echo 'EOF'
+            echo 'cloud<<EOF'
+            echo "ghcr.io/${GITHUB_REPOSITORY}-cloud"
+            if [[ "${{ steps.dockerhub.outputs.enabled }}" == 'true' ]]; then
+              echo "${DOCKERHUB_USERNAME}/traeky-cloud"
+            fi
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+      - uses: docker/metadata-action@v6
+        if: ${{ steps.publish.outputs.publish == 'true' }}
+        id: meta-dashboard
+        with:
+          images: ${{ steps.images.outputs.dashboard }}
+          tags: ${{ steps.publish.outputs.tag_rules }}
+      - uses: docker/metadata-action@v6
+        if: ${{ steps.publish.outputs.publish == 'true' }}
+        id: meta-cloud
+        with:
+          images: ${{ steps.images.outputs.cloud }}
+          tags: ${{ steps.publish.outputs.tag_rules }}
+      - name: Build and publish Dashboard image
+        if: ${{ steps.publish.outputs.publish == 'true' }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile.dashboard
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta-dashboard.outputs.tags }}
+          labels: ${{ steps.meta-dashboard.outputs.labels }}
+          build-args: |
+            TRAEKY_COMMIT=${{ steps.publish.outputs.commit }}
+          cache-from: type=gha,scope=dashboard-${{ steps.publish.outputs.channel }}
+          cache-to: type=gha,mode=max,scope=dashboard-${{ steps.publish.outputs.channel }}
+      - name: Build and publish Cloud image
+        if: ${{ steps.publish.outputs.publish == 'true' }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile.cloud
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta-cloud.outputs.tags }}
+          labels: ${{ steps.meta-cloud.outputs.labels }}
+          build-args: |
+            TRAEKY_COMMIT=${{ steps.publish.outputs.commit }}
+          cache-from: type=gha,scope=cloud-${{ steps.publish.outputs.channel }}
+          cache-to: type=gha,mode=max,scope=cloud-${{ steps.publish.outputs.channel }}

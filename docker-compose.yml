@@ -1,0 +1,93 @@
+services:
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+      args:
+        TRAEKY_VERSION: ${TRAEKY_VERSION:-}
+        TRAEKY_COMMIT: ${TRAEKY_COMMIT:-dev}
+    image: traeky-dashboard:local
+    ports:
+      - "8080:8080"
+    environment:
+      TRAEKY_ADDR: ":8080"
+      TRAEKY_MODE: "dashboard"
+      # Optional: dashboard/app legal links shown in the compact side-panel footer card.
+      # TRAEKY_DASHBOARD_PRIVACY_POLICY_URL: "https://traeky.example.org/privacy"
+      # TRAEKY_DASHBOARD_IMPRINT_URL: "https://traeky.example.org/imprint"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+  cloud:
+    build:
+      context: .
+      dockerfile: Dockerfile.cloud
+      args:
+        TRAEKY_VERSION: ${TRAEKY_VERSION:-}
+        TRAEKY_COMMIT: ${TRAEKY_COMMIT:-dev}
+    image: traeky-cloud:local
+    ports:
+      - "8081:8080"
+    environment:
+      TRAEKY_ADDR: ":8080"
+      TRAEKY_MODE: "cloud"
+      TRAEKY_CLOUD_STORE: "postgres"
+      TRAEKY_DATABASE_URL: "postgres://traeky:traeky_dev_password@postgres:5432/traeky?sslmode=disable"
+      TRAEKY_CORS_ORIGINS: "http://localhost:8080"
+      TRAEKY_REQUIRE_VAULT_AUTH: "true"
+      # Optional: also require the exact dashboard build commit to match the cloud image.
+      # TRAEKY_CLOUD_STRICT_COMMIT: "true"
+      TRAEKY_INACTIVE_RETENTION_DAYS: "365"
+      TRAEKY_MAX_PAYLOAD_BYTES: "1048576"
+      TRAEKY_MAX_TOTAL_STORED_BYTES: "268435456"
+      TRAEKY_MAX_VAULT_COUNT: "10000"
+      TRAEKY_RATE_LIMIT_PER_IP_MINUTE: "300"
+      TRAEKY_RATE_LIMIT_PER_VAULT_MINUTE: "90"
+      TRAEKY_CREATE_LIMIT_PER_IP_MINUTE: "20"
+      TRAEKY_CREATE_LIMIT_PER_IP_HOUR: "100"
+      # Set this to the reverse proxy/container subnet in production so rate limits use real client IPs.
+      # TRAEKY_TRUSTED_PROXIES: "172.16.0.0/12,127.0.0.1/32,::1/128"
+      # Optional: override the /api/v1/info terms/disclaimer shown before users add this cloud server.
+      # TRAEKY_CLOUD_TERMS_VERSION: "company-terms-2026-05"
+      # TRAEKY_CLOUD_TERMS_TITLE: "Example Cloud Terms"
+      # TRAEKY_CLOUD_DISCLAIMER: "Custom terms/disclaimer text..."
+      # TRAEKY_CLOUD_PRIVACY_POLICY_URL: "https://cloud.example.org/privacy"
+      # TRAEKY_CLOUD_IMPRINT_URL: "https://cloud.example.org/imprint"
+      # For production, put both services behind HTTPS and set this to your dashboard origin, for example:
+      # TRAEKY_CORS_ORIGINS: "https://traeky.example.org"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/traeky", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: traeky
+      POSTGRES_USER: traeky
+      POSTGRES_PASSWORD: traeky_dev_password
+    volumes:
+      - traeky-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U traeky -d traeky"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  traeky-postgres-data:
