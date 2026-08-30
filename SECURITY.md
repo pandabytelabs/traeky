@@ -41,22 +41,34 @@ A profile can use an additional cloud access secret. This secret is not the prof
 Client behavior:
 
 - Traeky derives a strong cloud access secret from the recovery phrase for new profiles.
-- Before sending it, the client computes a domain-separated SHA-256 proof: `SHA-256("traeky-cloud-auth-v1:" + secret)`.
-- The proof is sent with `X-Traeky-Vault-Auth` in the `ta1_` base64url format.
+- The secret itself never leaves the browser. Only a proof derived from it is sent.
+- The proof is bound to the origin of the server it is sent to: `HMAC-SHA-256(secret, "traeky-cloud-auth-v2|" + origin)`, transmitted with `X-Traeky-Vault-Auth` in the `ta2_` base64url format.
+- The origin is scheme, host and port. Path, query and casing do not affect the proof.
 - During rotation, the new proof is sent with `X-Traeky-New-Vault-Auth`.
 
 Server behavior:
 
 - The server stores only a salt, iteration count and `PBKDF2-HMAC-SHA-256(proof, salt, 210000 iterations)`.
-- Cloud backups require authenticated vault access by default. Protected backups require a syntactically valid `ta1_` proof for reads, writes and deletion; malformed auth headers are rejected before verification.
+- Cloud backups require authenticated vault access by default. Protected backups require a syntactically valid `ta1_`/`ta2_` proof for reads, writes and deletion; malformed auth headers are rejected before verification.
 - Verifier comparisons are constant-time.
+- The server treats the proof as an opaque bearer string; it never derives or verifies the origin binding itself.
 - The server still cannot decrypt the backup body.
 
 The cloud access secret is derived separately from the hidden vault ID. A party that only learns the hidden vault ID cannot read, overwrite or delete a protected backup. The encrypted backup remains unreadable without the recovery phrase or legacy profile passphrase. The auth proof is still a bearer credential on the wire, so HTTPS is mandatory outside localhost development.
 
+### Multi-server isolation
+
+Because the proof is bound to the target origin, a hostile or compromised cloud server learns only a credential that is valid on itself. It cannot replay that credential against another Traeky cloud server that holds the same vault, because deriving another origin's proof requires the cloud access secret, which stays in the browser. This matters for Cloud Connect's multi-server mode, where the same vault ID is stored on several independent servers.
+
+### Legacy proof migration
+
+Vaults created before origin binding are protected by the previous origin-independent proof `SHA-256("traeky-cloud-auth-v1:" + secret)` in the `ta1_` format. The dashboard keeps using that proof for such a vault until the next successful upload, which rotates it to the `ta2_` proof through `X-Traeky-New-Vault-Auth`. Reads and deletes fall back to the legacy proof once if the recorded state turns out to be stale, so a vault stays reachable while devices migrate at different times. A `ta1_` proof that has been rotated away stops being accepted.
+
 ## Remote rollback resistance
 
-Remote vault payloads include an encrypted client sync counter and encrypted client timestamp. During pull, the dashboard decrypts all reachable candidates before choosing a remote state. A cloud server cannot win conflict selection merely by changing its own `updated_at` metadata, and the client rejects a lower encrypted sync counter when the local profile has already observed a newer one.
+Remote vault payloads include an encrypted client sync counter and encrypted client timestamp. During pull, the dashboard decrypts all reachable candidates before choosing a remote state. A cloud server cannot win conflict selection merely by changing its own `updated_at` metadata.
+
+Once the local profile has uploaded at least once, any remote state carrying a lower sync counter is rejected. A payload without a counter is treated as counter `0` and is rejected as well, so replaying a pre-counter backup is not a way around the check.
 
 ## Remote deletion
 
@@ -80,6 +92,25 @@ Recommended public-cloud controls:
 - Configure `TRAEKY_INACTIVE_RETENTION_DAYS` for automatic cleanup if your operating policy allows it.
 
 These controls do not prove that encrypted content is legal; they make the cloud API a poor target for bulk illegal-content storage while preserving Zero-Knowledge.
+
+## Dashboard content security
+
+The dashboard is served with a Content Security Policy that pins code execution to the application's own origin: `script-src 'self'` and `style-src 'self'`, both without `unsafe-inline`, plus `object-src 'none'`, `base-uri 'none'` and `frame-ancestors 'none'`. The bundle contains no inline scripts and loads no third-party code.
+
+`connect-src` is deliberately broader: it allows `'self'`, any `https:` origin and loopback HTTP. Cloud Connect lets users point the dashboard at self-hosted cloud servers whose hostnames are unknown at build time, so no fixed allowlist can express the set of legitimate destinations. This widens the set of reachable data endpoints, not the set of executable code, and the dashboard only ever contacts CoinGecko (after explicit opt-in) and the cloud servers the user configured.
+
+## Untrusted input handling
+
+Two classes of input reach the dashboard from outside the encrypted vault, and both are treated as untrusted:
+
+- **Cloud server responses.** Error messages, terms text and version banners returned by a cloud server are normalized when they are received (control characters and HTML-significant characters removed, length capped) and HTML-escaped again at every render site. Terms text is rendered with `textContent`. A hostile server can therefore neither inject markup into the dashboard nor bloat a vault with an oversized reply.
+- **CSV imports.** A Traeky CSV may carry back local report settings (`holding_period_days`, `upcoming_holding_window_days`, `base_currency`) and the import preview lists every setting it would change before the user applies it. `price_fetch_enabled` and `coingecko_api_key` are explicitly **not** importable: a CSV must never be able to enable outbound price requests or redirect them to a third-party API key. Those two remain under the explicit control of the settings form.
+
+Encrypted vault envelopes are validated before use as well: the PBKDF2 iteration count carried in an envelope must fall in a plausible range, and the HKDF context string must be one Traeky itself writes. This blocks both a KDF downgrade and a crafted envelope that would otherwise freeze the browser tab with an unbounded iteration count.
+
+## Vault existence disclosure
+
+`GET /api/v1/vaults/{id}` answers `404` for an unknown vault and `401` for a vault that exists but was addressed without a valid proof. This distinction is intentional: the dashboard needs it to decide between creating and updating a backup, and the restore flow needs it to probe the current and legacy vault-ID derivations. It means an attacker who already knows a vault ID can confirm that the vault exists on a given server, but not read, modify or delete it. Vault IDs are derived from 256-bit entropy, so they cannot be enumerated, and the per-IP and per-vault rate limits apply to these requests.
 
 ## Reverse-proxy client IP handling
 
@@ -105,10 +136,15 @@ Do not set broad trusted-proxy ranges if untrusted clients can connect from thos
 - Use HTTPS in production. The dashboard rejects non-HTTPS cloud URLs except for localhost, and the server can run direct TLS with `TRAEKY_TLS_CERT_FILE` and `TRAEKY_TLS_KEY_FILE` or behind a trusted TLS reverse proxy.
 - Use a strong and unique local login passphrase. Store the recovery phrase offline and never in a password field, URL, log or support ticket.
 - Back up PostgreSQL regularly and test restore procedures.
+- The cloud API creates its table and index on startup. To run it with a database role that holds no DDL rights, apply the schema once out of band and set `TRAEKY_DB_AUTO_MIGRATE=false`.
 - Configure reverse-proxy logs so vault IDs and auth headers are not stored.
 - Do not log `X-Traeky-Vault-Auth` or `X-Traeky-New-Vault-Auth`.
 - Set request-size limits and rate limiting at the reverse proxy. Traeky also includes in-process per-IP and per-vault rate limits as a defensive backstop.
 - Keep the dashboard and cloud origins explicit in `TRAEKY_CORS_ORIGINS`; wildcard CORS is ignored unless explicitly enabled for isolated development.
+
+## Release integrity
+
+Container images are published only from pushes to `main` (`latest`, `stable`) and `develop` (`dev`), or from an explicit manual dispatch. Pull requests never publish: the publish workflow runs with repository secrets, so building a pull-request head there would put unreviewed code behind the release tags. Untrusted workflow inputs such as branch and tag names are passed to shell steps through the environment rather than interpolated into the script body.
 
 ## Container separation
 

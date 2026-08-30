@@ -239,7 +239,9 @@ func initCloudStore(backend, dataDir string) (cloud.Store, func(), error) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		store, err := cloud.NewPostgresStore(ctx, databaseURL)
+		store, err := cloud.NewPostgresStoreWithOptions(ctx, databaseURL, cloud.PostgresOptions{
+			AutoMigrate: envBool("TRAEKY_DB_AUTO_MIGRATE", true),
+		})
 		if err != nil {
 			return nil, nil, err
 		}
@@ -308,7 +310,11 @@ func securityHeaders(next http.Handler, trustedProxies []netip.Prefix) http.Hand
 		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), bluetooth=(), xr-spatial-tracking=()")
 		h.Set("X-Frame-Options", "DENY")
 		secureTransport := r.TLS != nil || (requestFromTrustedProxy(r, trustedProxies) && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https"))
-		csp := "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://api.coingecko.com https:; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'"
+		// connect-src allows any https: origin because Cloud Connect points the
+		// dashboard at self-hosted servers whose hostnames are unknown at build
+		// time. The localhost entries mirror normalizeCloudURL(), which permits
+		// plain HTTP for loopback only. Code execution stays pinned to 'self'.
+		csp := "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https: http://localhost:* http://127.0.0.1:* http://[::1]:*; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'"
 		if secureTransport {
 			csp += "; upgrade-insecure-requests"
 		}

@@ -249,7 +249,7 @@ The public cloud API base path is `/api/v1/`. Configure the dashboard with the c
 | `PUT` | `/api/v1/vaults/{vaultID}` | Create or update encrypted vault |
 | `DELETE` | `/api/v1/vaults/{vaultID}` | Delete encrypted vault |
 
-Writes use `If-None-Match: *` for initial creation and `If-Match: <revision>` for updates/deletes. Authenticated Cloud Connect requests include `X-Traeky-Vault-Auth`; rotation can include `X-Traeky-New-Vault-Auth`.
+Writes use `If-None-Match: *` for initial creation and `If-Match: <revision>` for updates/deletes. Authenticated Cloud Connect requests include `X-Traeky-Vault-Auth`; rotation can include `X-Traeky-New-Vault-Auth`. The auth proof is bound to the origin of the server it is sent to, so a credential learned by one cloud server cannot be replayed against another.
 
 Manual examples use placeholders only. Do not paste real cloud-auth proofs into logs, tickets or documentation.
 

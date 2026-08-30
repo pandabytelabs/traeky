@@ -36,6 +36,9 @@ services:
       TRAEKY_MODE: "cloud"
       TRAEKY_CLOUD_STORE: "postgres"
       TRAEKY_DATABASE_URL: "postgres://traeky:traeky_dev_password@postgres:5432/traeky?sslmode=disable"
+      # Set to "false" and apply the schema out of band to run with a database
+      # role that holds no DDL rights.
+      # TRAEKY_DB_AUTO_MIGRATE: "true"
       TRAEKY_CORS_ORIGINS: "http://localhost:8080"
       TRAEKY_REQUIRE_VAULT_AUTH: "true"
       # Optional: also require the exact dashboard build commit to match the cloud image.
