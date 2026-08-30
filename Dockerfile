@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 # Default local image: Dashboard only. CI publishes two images via
 # Dockerfile.dashboard and Dockerfile.cloud.
-FROM golang:1.26-alpine AS build
+FROM golang:1.27-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

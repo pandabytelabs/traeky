@@ -1,6 +1,10 @@
 const APP_VERSION = "dev";
 const ACCOUNT_TERMS_VERSION = "community-disclaimer-v1";
 const CLOUD_API_PREFIX = "/api/v1";
+// Cloud access proof versions. v1 is the legacy origin-independent proof, v2 is
+// bound to the target server's origin. See cloudAuthProof().
+const CLOUD_AUTH_PROOF_V1 = "v1";
+const CLOUD_AUTH_PROOF_V2 = "v2";
 const LOCAL_VAULT_KEY = "traeky:v2:vault";
 const ACCOUNT_INDEX_KEY = "traeky:v2:accounts:index";
 const ACCOUNT_VAULT_PREFIX = "traeky:v2:account:";
@@ -170,6 +174,45 @@ function traekyClientHeaders(extra = {}) {
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+
+const UNSAFE_TEXT_CHARS = new Set(["<", ">", "&", '"', "'", "`"]);
+
+// Strings that arrive from a remote cloud server (error messages, terms text,
+// version banners) are rendered in the dashboard and stored inside the vault.
+// Every render sink escapes them, but they are additionally normalized here so a
+// hostile or compromised server cannot inject markup through a future call site
+// or a plain confirm() dialog, and cannot bloat the vault with an oversized reply.
+function sanitizeServerText(value, maxLength = 180) {
+  let out = "";
+  for (const ch of String(value ?? "")) {
+    const code = ch.codePointAt(0);
+    out += (code < 0x20 || code === 0x7f || UNSAFE_TEXT_CHARS.has(ch)) ? " " : ch;
+  }
+  return out.trim().slice(0, maxLength);
+}
+
+// Multi-line server text (cloud terms) is rendered with textContent, so markup
+// is not a concern, but it is stored inside the encrypted vault and therefore
+// counts against the cloud payload limit. Keep the line structure, drop other
+// control characters and cap the length so a server cannot make a vault
+// unsyncable by returning an oversized disclaimer.
+function sanitizeMultilineServerText(value, maxLength = 20000) {
+  let out = "";
+  for (const ch of String(value ?? "")) {
+    const code = ch.codePointAt(0);
+    if (ch === "\n" || ch === "\t") { out += ch; continue; }
+    out += (code < 0x20 || code === 0x7f) ? " " : ch;
+  }
+  return out.trim().slice(0, maxLength);
+}
+
+// Version and commit identifiers are compared and displayed verbatim; restrict
+// them to the characters such identifiers can legitimately contain. Disallowed
+// characters are stripped rather than blanking the value, so a manipulated
+// version still fails the compatibility comparison instead of skipping it.
+function sanitizeVersionString(value, maxLength = 32) {
+  return String(value ?? "").trim().replace(/[^A-Za-z0-9._+-]/g, "").slice(0, maxLength);
+}
 
 function escapeHTML(value) {
   return String(value ?? "").replace(/[&<>'"]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[ch]));
@@ -861,6 +904,12 @@ function transactionsForProfileIDs(ids) {
   return all.filter(tx => set.has(String(tx.profile_id || 'main')));
 }
 
+// Targets without a recorded proof version predate origin binding, so they are
+// assumed to still carry the legacy v1 proof until a push migrates them.
+function normalizeAuthProofVersion(value) {
+  return String(value || '').trim() === CLOUD_AUTH_PROOF_V2 ? CLOUD_AUTH_PROOF_V2 : CLOUD_AUTH_PROOF_V1;
+}
+
 function normalizeCloudURL(value) {
   const raw = String(value || '').trim();
   if (!raw) return '';
@@ -904,6 +953,7 @@ function normalizeCloudTarget(target, fallback = {}) {
     last_remote_revision: Number(src.last_remote_revision ?? fallback.last_remote_revision ?? 0) || 0,
     last_sync_at: String(src.last_sync_at || fallback.last_sync_at || ''),
     last_remote_auth_secret: String(src.last_remote_auth_secret || fallback.last_remote_auth_secret || ''),
+    auth_proof_version: normalizeAuthProofVersion(src.auth_proof_version ?? fallback.auth_proof_version),
     cloud_retention_days: src.cloud_retention_days ?? fallback.cloud_retention_days ?? null,
     cloud_info_checked_at: String(src.cloud_info_checked_at || fallback.cloud_info_checked_at || ''),
     last_heartbeat_at: String(src.last_heartbeat_at || fallback.last_heartbeat_at || ''),
@@ -1114,6 +1164,35 @@ async function encryptRemoteVault(data, passphrase = session.passphrase, rootSec
   };
 }
 
+const MIN_ENVELOPE_PBKDF2_ITERATIONS = 10000;
+const MAX_ENVELOPE_PBKDF2_ITERATIONS = 2000000;
+// HKDF context strings Traeky has ever written for each envelope kind. The first
+// entry is the fallback for envelopes predating the explicit `info` field.
+const LOCAL_VAULT_KEY_INFOS = ["traeky/v1/vault-encryption", "traeky/v2/local-vault-encryption"];
+const REMOTE_VAULT_KEY_INFOS = ["traeky/v1/vault-encryption", "traeky/v2/remote-vault-encryption"];
+
+// PBKDF2 parameters are read from the envelope, which can originate from an
+// imported file or from a cloud server. Out-of-range values are rejected rather
+// than clamped: clamping would silently derive the wrong key, while an unbounded
+// iteration count lets a crafted vault freeze the browser tab.
+function envelopeIterations(value) {
+  if (value === undefined || value === null || value === '') return PBKDF2_ITERATIONS;
+  const iterations = Number(value);
+  if (!Number.isInteger(iterations) || iterations < MIN_ENVELOPE_PBKDF2_ITERATIONS || iterations > MAX_ENVELOPE_PBKDF2_ITERATIONS) {
+    throw new Error(t('invalid_vault'));
+  }
+  return iterations;
+}
+
+// The HKDF context string also comes from the envelope. Restricting it to the
+// contexts Traeky actually writes keeps the local vault key, the remote vault
+// key and the cloud credentials domain-separated.
+function envelopeKeyInfo(value, allowed) {
+  const info = String(value || '').trim() || allowed[0];
+  if (!allowed.includes(info)) throw new Error(t('unknown_vault_format'));
+  return info;
+}
+
 async function decryptVault(envelope, passphrase) {
   return (await decryptVaultWithSecrets(envelope, passphrase)).data;
 }
@@ -1122,15 +1201,15 @@ async function decryptVaultWithSecrets(envelope, passphrase) {
   if (!envelope || typeof envelope !== "object") throw new Error(t('invalid_vault'));
   if (envelope.format === "traeky-local-vault" && Number(envelope.version) === 3) {
     const salt = base64ToBytes(envelope.kdf?.salt);
-    const wrapKey = await deriveKey(passphrase, salt, Number(envelope.kdf?.iterations) || PBKDF2_ITERATIONS);
+    const wrapKey = await deriveKey(passphrase, salt, envelopeIterations(envelope.kdf?.iterations));
     const rootSecret = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: base64ToBytes(envelope.wrapped_seed?.iv) }, wrapKey, base64ToBytes(envelope.wrapped_seed?.ciphertext)));
-    const vaultKey = await deriveRootKey(rootSecret, envelope.vault?.info || "traeky/v1/vault-encryption");
+    const vaultKey = await deriveRootKey(rootSecret, envelopeKeyInfo(envelope.vault?.info, LOCAL_VAULT_KEY_INFOS));
     const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv: base64ToBytes(envelope.vault?.iv) }, vaultKey, base64ToBytes(envelope.vault?.ciphertext));
     return { data: normalizeData(JSON.parse(new TextDecoder().decode(plaintext))), rootSecret };
   }
   if (envelope.format === "traeky-vault" && Number(envelope.version) === 2) {
     const salt = base64ToBytes(envelope.kdf?.salt);
-    const key = await deriveKey(passphrase, salt, Number(envelope.kdf?.iterations) || PBKDF2_ITERATIONS);
+    const key = await deriveKey(passphrase, salt, envelopeIterations(envelope.kdf?.iterations));
     const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv: base64ToBytes(envelope.iv) }, key, base64ToBytes(envelope.ciphertext));
     return { data: normalizeData(JSON.parse(new TextDecoder().decode(plaintext))), rootSecret: null };
   }
@@ -1143,7 +1222,7 @@ async function decryptVaultWithSecrets(envelope, passphrase) {
 async function decryptRemoteVault(envelope, passphrase = session.passphrase, rootSecret = session.rootSecret) {
   if (envelope?.format === "traeky-remote-vault" && Number(envelope.version) === 3) {
     if (!rootSecret) throw new Error(t('invalid_recovery_phrase'));
-    const key = await deriveRootKey(rootSecret, envelope.key_derivation?.info || "traeky/v1/vault-encryption");
+    const key = await deriveRootKey(rootSecret, envelopeKeyInfo(envelope.key_derivation?.info, REMOTE_VAULT_KEY_INFOS));
     const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv: base64ToBytes(envelope.iv) }, key, base64ToBytes(envelope.ciphertext));
     return normalizeData(JSON.parse(new TextDecoder().decode(plaintext)));
   }
@@ -2126,8 +2205,11 @@ function latestPriceFetchLabel(data = session.data) {
 }
 
 function shouldRefreshPrices(data = session.data, force = false) {
-  if (force) return true;
+  // The CoinGecko opt-in is a consent gate, not a rate limit: it is enforced
+  // before `force` is honored so that no call path can reach the network while
+  // price fetching is switched off. `force` only skips the staleness window.
   if (!session.unlocked || !priceFetchEnabled(data)) return false;
+  if (force) return true;
   if (Date.now() - priceRefreshLastRun < PRICE_REFRESH_STALE_MS) return false;
   const latest = latestPriceFetchTime(data);
   return !latest || Date.now() - latest >= PRICE_REFRESH_STALE_MS;
@@ -2309,7 +2391,7 @@ async function verifyRestoreCloudServers(rawURLs, msg = null) {
       target = mergeCloudTargetInfo(target, info, terms);
       checked.push(target);
     } catch (err) {
-      target = normalizeCloudTarget({ ...target, last_heartbeat_at: nowISO(), last_status: 'offline', last_error: String(err.message || err).slice(0, 180) });
+      target = normalizeCloudTarget({ ...target, last_heartbeat_at: nowISO(), last_status: 'offline', last_error: sanitizeServerText(err.message || err) });
       checked.push(target);
       errors.push(`${url}: ${target.last_error}`);
     }
@@ -2447,29 +2529,44 @@ function bindAuth() {
         const candidates = [];
         const targetState = new Map(restoreCheck.targets.map(target => [target.url, target]));
         const failures = [...(restoreCheck.errors || [])];
+        // A fresh restore knows nothing about the vaults on these servers, so
+        // each vault-ID candidate is probed with the origin-bound proof first
+        // and with the legacy proof as a fallback for vaults not yet migrated.
+        const proofVersions = [CLOUD_AUTH_PROOF_V2, CLOUD_AUTH_PROOF_V1];
         for (const url of cloudURLs) {
+          let settled = false;
           for (const attempt of attempts) {
+            if (settled) break;
             try {
               const endpoint = `${url}${CLOUD_API_PREFIX}/vaults/${encodeURIComponent(attempt.vaultID)}`;
-              const res = await fetch(endpoint, { headers: traekyClientHeaders({ 'X-Traeky-Vault-Auth': await cloudAuthProof(attempt.authSecret) }) });
+              let res = null;
+              let proofVersion = proofVersions[0];
+              for (const version of proofVersions) {
+                proofVersion = version;
+                res = await fetch(endpoint, { headers: traekyClientHeaders({ 'X-Traeky-Vault-Auth': await cloudAuthProof(attempt.authSecret, url, version) }) });
+                if (res.status !== 401) break;
+              }
               if (res.ok) {
                 const payload = await safeJSON(res);
-                const state = normalizeCloudTarget({ ...(targetState.get(url) || {}), url, last_sync_at: nowISO(), last_remote_revision: Number(payload.revision || 0), last_remote_auth_secret: attempt.authSecret, updated_at: payload.updated_at || payload.body?.sealed_at || nowISO(), last_status: 'synced', last_error: '' });
+                const state = normalizeCloudTarget({ ...(targetState.get(url) || {}), url, last_sync_at: nowISO(), last_remote_revision: Number(payload.revision || 0), last_remote_auth_secret: attempt.authSecret, auth_proof_version: proofVersion, updated_at: payload.updated_at || payload.body?.sealed_at || nowISO(), last_status: 'synced', last_error: '' });
                 targetState.set(url, state);
                 candidates.push({ url, attempt, payload, target: state });
+                settled = true;
                 break;
               }
               if (res.status !== 404) {
                 const payload = await safeJSON(res);
-                const state = normalizeCloudTarget({ ...(targetState.get(url) || {}), url, last_status: res.status === 401 ? 'conflict' : 'offline', last_error: payload.message || `HTTP ${res.status}` });
+                const state = normalizeCloudTarget({ ...(targetState.get(url) || {}), url, last_status: res.status === 401 ? 'conflict' : 'offline', last_error: serverErrorMessage(payload, res) });
                 targetState.set(url, state);
                 failures.push(`${url}: ${state.last_error}`);
+                settled = true;
                 break;
               }
             } catch (err) {
-              const state = normalizeCloudTarget({ ...(targetState.get(url) || {}), url, last_status: 'offline', last_error: String(err.message || err).slice(0, 180) });
+              const state = normalizeCloudTarget({ ...(targetState.get(url) || {}), url, last_status: 'offline', last_error: sanitizeServerText(err.message || err) });
               targetState.set(url, state);
               failures.push(`${url}: ${state.last_error}`);
+              settled = true;
               break;
             }
           }
@@ -2632,7 +2729,7 @@ function renderCloudLegalLinks(source = {}, options = {}) {
 }
 
 function normalizeCommitShort(value) {
-  const commit = String(value || '').trim();
+  const commit = sanitizeVersionString(value, 64);
   return commit.length > 7 ? commit.slice(0, 7) : commit;
 }
 
@@ -3226,11 +3323,15 @@ function renderImportPreview(preview) {
   const rows = preview.transactions || [];
   const warningsMeta = paginatedItems('import-warnings', warnings, { size: 10 });
   const warningBlock = warnings.length ? `<div class="notice info"><b>${t('import_warnings')}</b><ul>${warningsMeta.rows.map(w => `<li>${escapeHTML(w)}</li>`).join('')}</ul>${renderPagination('import-warnings', warningsMeta)}</div>` : '';
+  const configChanges = importConfigChanges(preview.config);
+  const configBlock = configChanges.length
+    ? `<div class="notice info"><b>${t('import_config_changes')}</b><ul>${configChanges.map(change => `<li>${escapeHTML(t(`config_label_${change.key}`))}: ${escapeHTML(String(change.from))} &rarr; ${escapeHTML(String(change.to))}</li>`).join('')}</ul></div>`
+    : '';
   const table = renderPaginatedTable('import-preview', rows, pageRows =>
     `<div class="table-wrap"><table><thead><tr><th>${t('time')}</th><th>${t('type')}</th><th>${t('asset')}</th><th>${t('amount')}</th><th>${t('price')}</th><th>${t('profile')}</th></tr></thead><tbody>${pageRows.map(tx => { const price = importPreviewPrice(tx); return `<tr><td>${fmtDate(tx.timestamp)}</td><td>${escapeHTML(txLabel(tx.tx_type))}</td><td>${escapeHTML(tx.asset_symbol)}</td><td>${fmtNum(tx.amount)}</td><td>${price ? fmtMoney(price.price, price.currency) : '-'}</td><td>${escapeHTML(txProfileName(tx.profile_id))}</td></tr>`; }).join('')}</tbody></table></div>`,
     ''
   );
-  return `<div class="import-preview-block"><div class="notice ${warnings.length ? 'info' : 'success'}">${t(rows.length ? 'import_ready' : 'import_no_rows', { count: rows.length, warnings: warnings.length })}</div>${warningBlock}${table}</div>`;
+  return `<div class="import-preview-block"><div class="notice ${warnings.length ? 'info' : 'success'}">${t(rows.length ? 'import_ready' : 'import_no_rows', { count: rows.length, warnings: warnings.length })}</div>${configBlock}${warningBlock}${table}</div>`;
 }
 
 function renderImportResult(result) {
@@ -3778,19 +3879,33 @@ function buildImportPreview(rows, source = 'auto', filename = '', targetProfileI
   return { source: detected, filename, target_profile_id: targetProfileID, transactions, warnings, config: Object.keys(importedConfig).length ? importedConfig : null, price_cache, created_at: nowISO() };
 }
 
+// Settings a Traeky CSV export may carry back into the profile. Deliberately
+// limited to local report settings: `price_fetch_enabled` and
+// `coingecko_api_key` are NOT importable, because a CSV is untrusted input and
+// must never be able to switch on outbound price requests or redirect them to a
+// third-party API key without the user knowing. Those two stay under the
+// explicit control of the settings form.
+const IMPORTABLE_CONFIG_KEYS = ['holding_period_days', 'upcoming_holding_window_days', 'base_currency'];
+
 function collectTraekyImportConfig(obj, target) {
   const lower = Object.fromEntries(Object.entries(obj).map(([k, v]) => [String(k).toLowerCase(), v]));
   const get = (key) => obj[key] ?? lower[String(key).toLowerCase()] ?? '';
   const holding = Number(get('holding_period_days'));
   const upcoming = Number(get('upcoming_holding_window_days'));
   const base = String(get('base_currency') || '').trim().toUpperCase();
-  const priceFetch = String(get('price_fetch_enabled') || '').trim().toLowerCase();
-  const apiKey = String(get('coingecko_api_key') || '').trim();
   if (Number.isFinite(holding) && holding > 0) target.holding_period_days = holding;
   if (Number.isFinite(upcoming) && upcoming > 0) target.upcoming_holding_window_days = upcoming;
   if (['EUR', 'USD'].includes(base)) target.base_currency = base;
-  if (['true', 'false'].includes(priceFetch)) target.price_fetch_enabled = priceFetch === 'true';
-  if (apiKey) target.coingecko_api_key = apiKey;
+}
+
+// Describes the settings an import would change, so the preview can show them
+// before the user applies it.
+function importConfigChanges(config) {
+  if (!config || typeof config !== 'object') return [];
+  const current = session.data?.config || {};
+  return IMPORTABLE_CONFIG_KEYS
+    .filter(key => config[key] !== undefined && String(config[key]) !== String(current[key] ?? ''))
+    .map(key => ({ key, from: current[key] ?? '-', to: config[key] }));
 }
 
 function detectImporter(header, filename) {
@@ -3915,7 +4030,12 @@ async function applyImportPreview() {
     session.data.prices = rebuildCurrentPricesFromCache(session.data.prices || {}, session.data.price_cache);
   }
   if (preview.config && typeof preview.config === 'object') {
-    session.data.config = { ...session.data.config, ...preview.config };
+    // Re-apply the whitelist here as well: a preview object could have been
+    // produced by an older build or a restored session.
+    const allowed = Object.fromEntries(IMPORTABLE_CONFIG_KEYS
+      .filter(key => preview.config[key] !== undefined)
+      .map(key => [key, preview.config[key]]));
+    session.data.config = { ...session.data.config, ...allowed };
   }
   session.data.import_runs = [...(session.data.import_runs || []), { id: uuid(), source: preview.source, filename: preview.filename, imported, skipped, warnings: preview.warnings || [], created_at: nowISO() }].slice(-50);
   session.pendingImport = null;
@@ -4201,11 +4321,11 @@ async function refreshPrices(options = {}) {
 
 function normalizeCloudTerms(payload = {}) {
   const rawTerms = payload.terms && typeof payload.terms === 'object' ? payload.terms : {};
-  const body = String(rawTerms.body || rawTerms.text || payload.disclaimer || payload.terms_text || '').trim();
+  const body = sanitizeMultilineServerText(rawTerms.body || rawTerms.text || payload.disclaimer || payload.terms_text || '');
   return {
     required: rawTerms.required !== false,
-    version: String(rawTerms.version || payload.terms_version || 'default').trim() || 'default',
-    title: String(rawTerms.title || payload.terms_title || t('cloud_terms_title')).trim() || t('cloud_terms_title'),
+    version: sanitizeServerText(rawTerms.version || payload.terms_version || '', 64) || 'default',
+    title: sanitizeServerText(rawTerms.title || payload.terms_title || '', 200) || t('cloud_terms_title'),
     body: body || t('cloud_terms_missing'),
     privacy_policy_url: normalizeExternalLegalURL(rawTerms.privacy_policy_url || rawTerms.privacyPolicyUrl || rawTerms.privacy_url || payload.privacy_policy_url || payload.privacyPolicyUrl || payload.privacy_url || ''),
     imprint_url: normalizeExternalLegalURL(rawTerms.imprint_url || rawTerms.imprintUrl || rawTerms.legal_notice_url || payload.imprint_url || payload.imprintUrl || payload.legal_notice_url || '')
@@ -4224,17 +4344,17 @@ function cloudTermsAccepted(target, terms) {
 async function fetchCloudServerInfo(url) {
   const res = await fetch(`${normalizeCloudURL(url)}${CLOUD_API_PREFIX}/info`, { cache: 'no-store', headers: traekyClientHeaders() });
   const payload = await safeJSON(res);
-  if (!res.ok) throw new Error(payload.message || `HTTP ${res.status}`);
+  if (!res.ok) throw new Error(serverErrorMessage(payload, res));
   validateCloudCompatibility(payload);
   return payload;
 }
 
 function cloudInfoVersion(info = {}) {
-  return String(info.traeky_version || info.app_version || '').trim().replace(/^v/i, '');
+  return sanitizeVersionString(String(info.traeky_version || info.app_version || '').trim().replace(/^v/i, ''));
 }
 
 function cloudInfoCommit(info = {}) {
-  return String(info.commit || info.cloud_commit || '').trim();
+  return sanitizeVersionString(info.commit || info.cloud_commit || '', 64);
 }
 
 function cloudInfoRetentionDays(info = {}) {
@@ -4290,8 +4410,8 @@ async function ensureCloudTargetCompatible(target) {
 async function fetchCloudServerHealth(url) {
   const res = await fetch(`${normalizeCloudURL(url)}/health`, { cache: 'no-store' });
   const payload = await safeJSON(res);
-  if (!res.ok) throw new Error(payload.message || payload.error || `HTTP ${res.status}`);
-  if (payload.status && payload.status !== 'ok') throw new Error(payload.message || payload.status);
+  if (!res.ok) throw new Error(serverErrorMessage(payload, res));
+  if (payload.status && payload.status !== 'ok') throw new Error(sanitizeServerText(payload.message || payload.status) || `HTTP ${res.status}`);
   return payload;
 }
 
@@ -4499,12 +4619,11 @@ async function deleteCloudTarget(e) {
       const deleteAuthSecret = String(session.data.config.cloud_key || '') === recoveryCheck.derived.legacyVaultID ? recoveryCheck.derived.legacyAuthSecret : recoveryCheck.derived.authSecret;
       const revision = Number(target.last_remote_revision || 0);
       if (!revision) throw new Error(t('remote_conflict'));
-      const deleteHeaders = traekyClientHeaders({ 'X-Traeky-Vault-Auth': await cloudAuthProof(deleteAuthSecret), 'If-Match': String(revision) });
       if (msg) msg.innerHTML = `<div class="notice info">${t('cloud_deleting')}</div>`;
-      const res = await fetch(cloudEndpoint(target), { method: 'DELETE', headers: deleteHeaders });
+      const res = await cloudAuthedDelete(cloudEndpoint(target), target, deleteAuthSecret, { 'If-Match': String(revision) });
       if (!(res.status === 204 || res.status === 404)) {
         const payload = await safeJSON(res);
-        throw new Error(payload.message || `HTTP ${res.status}`);
+        throw new Error(serverErrorMessage(payload, res));
       }
     }
     const nextTargets = found.targets.filter((_, idx) => idx !== found.index);
@@ -4526,23 +4645,89 @@ function cloudEndpoint(target = null, vaultID = null) {
   return `${base}${CLOUD_API_PREFIX}/vaults/${encodeURIComponent(id)}`;
 }
 
-async function cloudAuthProof(secret) {
-  const value = String(secret || '').trim();
-  if (!value) return '';
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`traeky-cloud-auth-v1:${value}`));
-  return `ta1_${b64url(new Uint8Array(digest))}`;
+function cloudAuthOrigin(url) {
+  try { return new URL(String(url || '')).origin.toLowerCase(); } catch { return ''; }
 }
 
-async function cloudAuthHeaders(target = null) {
+// Cloud access proof.
+//
+// v2 binds the proof to the origin of the server it is sent to, using the cloud
+// access secret as an HMAC key. A hostile or compromised cloud server therefore
+// only ever learns a credential that is valid on itself and cannot replay it
+// against another Traeky cloud server holding the same vault. Deriving another
+// origin's proof requires the secret, which never leaves the browser.
+//
+// v1 is the previous origin-independent proof. It is kept only to authenticate
+// vaults that have not been migrated yet; every successful push rotates such a
+// vault to a v2 proof via X-Traeky-New-Vault-Auth.
+async function cloudAuthProof(secret, url = '', version = CLOUD_AUTH_PROOF_V2) {
+  const value = String(secret || '').trim();
+  if (!value) return '';
+  if (version === CLOUD_AUTH_PROOF_V1) {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`traeky-cloud-auth-v1:${value}`));
+    return `ta1_${b64url(new Uint8Array(digest))}`;
+  }
+  const origin = cloudAuthOrigin(url);
+  if (!origin) throw new Error(t('cloud_delete_need_config'));
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(value), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const mac = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`traeky-cloud-auth-v2|${origin}`));
+  return `ta2_${b64url(new Uint8Array(mac))}`;
+}
+
+async function cloudAuthHeaders(target = null, options = {}) {
   const cfg = session.data.config;
+  const url = target?.url || cfg.cloud_url || '';
   const currentSecret = String(cfg.cloud_auth_secret || '').trim();
   const remoteSecret = String(target?.last_remote_auth_secret || cfg.last_remote_auth_secret || currentSecret).trim();
+  const revision = Number(target?.last_remote_revision || cfg.last_remote_revision || 0) || 0;
+  // Without a known remote revision the vault is about to be created, so protect
+  // it with the origin-bound proof straight away. An existing vault is addressed
+  // with the proof version it is actually known to carry.
+  const proofVersion = options.proofVersion || (revision ? normalizeAuthProofVersion(target?.auth_proof_version) : CLOUD_AUTH_PROOF_V2);
   const headers = {};
-  if (remoteSecret) headers['X-Traeky-Vault-Auth'] = await cloudAuthProof(remoteSecret);
-  if ((target?.last_remote_revision || cfg.last_remote_revision) && remoteSecret && currentSecret && remoteSecret !== currentSecret) {
-    headers['X-Traeky-New-Vault-Auth'] = await cloudAuthProof(currentSecret);
+  if (remoteSecret) headers['X-Traeky-Vault-Auth'] = await cloudAuthProof(remoteSecret, url, proofVersion);
+  const secretRotation = Boolean(revision && remoteSecret && currentSecret && remoteSecret !== currentSecret);
+  const proofUpgrade = Boolean(revision && currentSecret && proofVersion !== CLOUD_AUTH_PROOF_V2);
+  if (secretRotation || proofUpgrade) {
+    headers['X-Traeky-New-Vault-Auth'] = await cloudAuthProof(currentSecret, url, CLOUD_AUTH_PROOF_V2);
   }
   return headers;
+}
+
+// Authenticated GET with a one-shot fallback to the other proof version. The
+// recorded version can be stale - for example when another device already
+// migrated the vault on a server this profile has not talked to since. Returns
+// the proof version that the server actually accepted.
+async function cloudAuthedGet(endpoint, target) {
+  const recorded = Number(target?.last_remote_revision || 0)
+    ? normalizeAuthProofVersion(target?.auth_proof_version)
+    : CLOUD_AUTH_PROOF_V2;
+  const order = recorded === CLOUD_AUTH_PROOF_V2
+    ? [CLOUD_AUTH_PROOF_V2, CLOUD_AUTH_PROOF_V1]
+    : [CLOUD_AUTH_PROOF_V1, CLOUD_AUTH_PROOF_V2];
+  let res = null;
+  let proofVersion = order[0];
+  for (const version of order) {
+    proofVersion = version;
+    res = await fetch(endpoint, { headers: traekyClientHeaders(await cloudAuthHeaders(target, { proofVersion: version })) });
+    if (res.status !== 401) break;
+  }
+  return { res, proofVersion };
+}
+
+// DELETE with the same one-shot proof-version fallback as cloudAuthedGet, so a
+// vault that has not been migrated yet stays deletable.
+async function cloudAuthedDelete(endpoint, target, secret, extraHeaders = {}) {
+  const order = normalizeAuthProofVersion(target?.auth_proof_version) === CLOUD_AUTH_PROOF_V2
+    ? [CLOUD_AUTH_PROOF_V2, CLOUD_AUTH_PROOF_V1]
+    : [CLOUD_AUTH_PROOF_V1, CLOUD_AUTH_PROOF_V2];
+  let res = null;
+  for (const version of order) {
+    const headers = traekyClientHeaders({ ...extraHeaders, 'X-Traeky-Vault-Auth': await cloudAuthProof(secret, target?.url || '', version) });
+    res = await fetch(endpoint, { method: 'DELETE', headers });
+    if (res.status !== 401) break;
+  }
+  return res;
 }
 
 async function syncPush(options = {}) {
@@ -4579,13 +4764,14 @@ async function syncPush(options = {}) {
 
 async function refreshRemoteRevisionForPush(target) {
   const tcopy = normalizeCloudTarget(target);
-  const res = await fetch(cloudEndpoint(tcopy), { headers: traekyClientHeaders(await cloudAuthHeaders(tcopy)) });
+  const { res, proofVersion } = await cloudAuthedGet(cloudEndpoint(tcopy), tcopy);
   const payload = await safeJSON(res);
   if (res.status === 404) return { exists: false, target: tcopy, payload: null };
   if (!res.ok) {
     if (res.status === 401) throw new Error(t('access_wrong'));
-    throw new Error(payload.message || `HTTP ${res.status}`);
+    throw new Error(serverErrorMessage(payload, res));
   }
+  tcopy.auth_proof_version = proofVersion;
   tcopy.last_remote_revision = Number(payload.revision || 0);
   tcopy.last_remote_auth_secret = String(tcopy.last_remote_auth_secret || session.data.config.cloud_auth_secret || '').trim();
   tcopy.updated_at = payload.updated_at || payload.body?.sealed_at || nowISO();
@@ -4619,18 +4805,22 @@ async function syncPushTarget(target, envelope) {
     if (!res.ok) {
       if (res.status === 401) throw new Error(t('access_wrong'));
       if (res.status === 409) throw new Error(payload.error === 'vault_occupied' ? t('occupied_key') : t('remote_conflict'));
-      throw new Error(payload.message || `HTTP ${res.status}`);
+      throw new Error(serverErrorMessage(payload, res));
     }
     tcopy.last_sync_at = nowISO();
     tcopy.last_remote_revision = Number(payload.revision || 0);
     tcopy.last_remote_auth_secret = String(session.data.config.cloud_auth_secret || '').trim();
+    // The write succeeded, so the server accepted the current proof and applied
+    // any X-Traeky-New-Vault-Auth rotation: the vault is now protected by the
+    // origin-bound proof.
+    tcopy.auth_proof_version = CLOUD_AUTH_PROOF_V2;
     tcopy.updated_at = payload.updated_at || nowISO();
     tcopy.last_status = 'synced';
     tcopy.last_error = '';
     return { ok: true, target: tcopy, payload };
   } catch (err) {
     tcopy.last_status = String(err.message || err).includes(t('remote_conflict')) ? 'conflict' : 'offline';
-    tcopy.last_error = String(err.message || err).slice(0, 180);
+    tcopy.last_error = sanitizeServerText(err.message || err);
     return { ok: false, target: tcopy, error: tcopy.last_error };
   }
 }
@@ -4658,7 +4848,11 @@ async function syncPull() {
     const selected = candidates[0];
     const cfg = session.data.config;
     const localCounter = Number(cfg.cloud_sync_counter || 0) || 0;
-    if (selected.clientCounter && localCounter && selected.clientCounter < localCounter) throw new Error('Remote vault rollback detected.');
+    // Rollback protection: once this profile has pushed with a sync counter, any
+    // remote state carrying a lower counter is rejected. A missing counter reads
+    // as 0 and is rejected too, so a server cannot bypass the check by replaying
+    // a pre-counter payload.
+    if (localCounter && selected.clientCounter < localCounter) throw new Error(t('cloud_rollback_detected'));
     const localSnapshots = normalizeSnapshots(session.data.snapshots);
     let data = selected.decrypted;
     data.snapshots = localSnapshots;
@@ -4678,12 +4872,13 @@ async function fetchRemoteTarget(target) {
   let tcopy = normalizeCloudTarget(target);
   try {
     tcopy = await ensureCloudTargetCompatible(tcopy);
-    const res = await fetch(cloudEndpoint(tcopy), { headers: traekyClientHeaders(await cloudAuthHeaders(tcopy)) });
+    const { res, proofVersion } = await cloudAuthedGet(cloudEndpoint(tcopy), tcopy);
     const payload = await safeJSON(res);
     if (!res.ok) {
       if (res.status === 401) throw new Error(t('access_wrong'));
-      throw new Error(payload.message || `HTTP ${res.status}`);
+      throw new Error(serverErrorMessage(payload, res));
     }
+    tcopy.auth_proof_version = proofVersion;
     tcopy.last_status = 'synced';
     tcopy.last_error = '';
     tcopy.last_remote_revision = Number(payload.revision || tcopy.last_remote_revision || 0);
@@ -4691,7 +4886,7 @@ async function fetchRemoteTarget(target) {
     return { ok: true, target: tcopy, payload };
   } catch (err) {
     tcopy.last_status = 'offline';
-    tcopy.last_error = String(err.message || err).slice(0, 180);
+    tcopy.last_error = sanitizeServerText(err.message || err);
     return { ok: false, target: tcopy, error: tcopy.last_error };
   }
 }
@@ -4737,7 +4932,7 @@ async function syncTest() {
         tested.push(tcopy);
       } catch (err) {
         tcopy.last_status = 'offline';
-        tcopy.last_error = String(err.message || err).slice(0, 180);
+        tcopy.last_error = sanitizeServerText(err.message || err);
         tested.push(tcopy);
       }
     }
@@ -4777,14 +4972,14 @@ async function probeCloudTarget(target) {
       tcopy.strict_client_commit = Boolean(info.strict_client_commit);
     } catch (infoErr) {
       tcopy.last_status = 'offline';
-      tcopy.last_error = String(`Info: ${infoErr.message || infoErr}`).slice(0, 180);
+      tcopy.last_error = `Info: ${sanitizeServerText(infoErr.message || infoErr, 160)}`;
       return { ok: false, target: tcopy, error: tcopy.last_error, payload: health };
     }
     return { ok: true, target: tcopy, payload: health };
   } catch (err) {
     tcopy.last_heartbeat_at = nowISO();
     tcopy.last_status = 'offline';
-    tcopy.last_error = String(err.message || err).slice(0, 180);
+    tcopy.last_error = sanitizeServerText(err.message || err);
     return { ok: false, target: tcopy, error: tcopy.last_error };
   }
 }
@@ -4826,7 +5021,7 @@ async function syncTestTarget(id) {
   setCloudTargets(session.data.config, found.targets);
   render();
   const freshMsg = $('#sync-msg');
-  if (freshMsg) freshMsg.innerHTML = `<div class="notice ${result.ok ? 'success' : 'danger'}">${escapeHTML(result.target.label || result.target.url)}: ${result.ok ? t('cloud_reachable') : `${t('cloud_test_failed')}: ${result.error}`}</div>`;
+  if (freshMsg) freshMsg.innerHTML = `<div class="notice ${result.ok ? 'success' : 'danger'}">${escapeHTML(result.target.label || result.target.url)}: ${result.ok ? t('cloud_reachable') : `${t('cloud_test_failed')}: ${escapeHTML(result.error)}`}</div>`;
 }
 
 async function toggleCloudTarget(id) {
@@ -4841,6 +5036,13 @@ async function toggleCloudTarget(id) {
 }
 
 async function safeJSON(res) { try { return await res.json(); } catch { return {}; } }
+
+// Extracts the error text of a cloud server response. The message is attacker
+// controlled whenever the server is hostile or compromised, so it is sanitized
+// here at the source rather than only at the point where it is displayed.
+function serverErrorMessage(payload, res) {
+  return sanitizeServerText(payload?.message || payload?.error || '') || `HTTP ${res?.status ?? 0}`;
+}
 function deviceID() { let id = localStorage.getItem(DEVICE_ID_KEY); if (!id) { id = uuid(); localStorage.setItem(DEVICE_ID_KEY, id); } return id; }
 
 
@@ -5012,7 +5214,6 @@ async function deleteCloudBackup(e) {
     }
     const recoveryCheck = await verifyRecoveryPhraseForCurrentAccount(String(fd.get('delete_recovery_phrase') || fd.get('mnemonic') || ''));
     const deleteAuthSecret = String(session.data.config.cloud_key || '') === recoveryCheck.derived.legacyVaultID ? recoveryCheck.derived.legacyAuthSecret : recoveryCheck.derived.authSecret;
-    const deleteHeaders = traekyClientHeaders({ 'X-Traeky-Vault-Auth': await cloudAuthProof(deleteAuthSecret) });
     msg.innerHTML = `<div class="notice info">${t('cloud_deleting')}</div>`;
     const updated = [];
     const errors = [];
@@ -5020,7 +5221,7 @@ async function deleteCloudBackup(e) {
       const tcopy = normalizeCloudTarget(target);
       const revision = Number(tcopy.last_remote_revision || 0);
       if (!revision) throw new Error(t('remote_conflict'));
-      const res = await fetch(cloudEndpoint(tcopy), { method: 'DELETE', headers: { ...deleteHeaders, 'If-Match': String(revision) } });
+      const res = await cloudAuthedDelete(cloudEndpoint(tcopy), tcopy, deleteAuthSecret, { 'If-Match': String(revision) });
       if (res.status === 204 || res.status === 404) {
         tcopy.last_remote_revision = 0;
         tcopy.last_sync_at = '';
@@ -5030,7 +5231,7 @@ async function deleteCloudBackup(e) {
       } else {
         const payload = await safeJSON(res);
         tcopy.last_status = res.status === 401 ? 'conflict' : 'offline';
-        tcopy.last_error = payload.message || `HTTP ${res.status}`;
+        tcopy.last_error = serverErrorMessage(payload, res);
         errors.push(`${tcopy.label || tcopy.url}: ${tcopy.last_error}`);
       }
       updated.push(tcopy);

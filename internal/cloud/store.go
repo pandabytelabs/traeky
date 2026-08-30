@@ -1,6 +1,7 @@
 package cloud
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -24,7 +25,12 @@ const authSaltBytes = 16
 const authHashBytes = 32
 
 var vaultIDPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{31,191}$`)
-var authProofPattern = regexp.MustCompile(`^ta1_[a-zA-Z0-9_-]{43}$`)
+
+// authProofPattern accepts both client proof formats. ta1_ is the legacy
+// origin-independent proof; ta2_ is the origin-bound proof, which keeps a
+// credential learned by one cloud server from being replayed against another.
+// The server treats either as an opaque bearer string and never derives it.
+var authProofPattern = regexp.MustCompile(`^ta[12]_[a-zA-Z0-9_-]{43}$`)
 
 var (
 	ErrNotFound             = errors.New("vault not found")
@@ -53,6 +59,71 @@ type StorageUsage struct {
 	BodyBytes  int64 `json:"body_bytes"`
 }
 
+// fileStoreUsageTTL bounds how long the FileStore trusts its cached usage
+// counters before rescanning the data directory. The store owns the directory
+// exclusively, so the counters stay exact through incremental updates; the TTL
+// only resynchronizes after out-of-band changes such as manual file removal.
+const fileStoreUsageTTL = 5 * time.Minute
+
+// usageCache keeps StorageUsage in memory so that quota checks do not have to
+// re-read every stored vault on each write. Writers report their own deltas;
+// the cache falls back to a full recount when it is cold, expired or invalidated.
+type usageCache struct {
+	mu       sync.Mutex
+	ttl      time.Duration
+	loaded   bool
+	loadedAt time.Time
+	usage    StorageUsage
+}
+
+func newUsageCache(ttl time.Duration) *usageCache {
+	return &usageCache{ttl: ttl}
+}
+
+// value returns the cached usage, recounting via load when the cache is cold or
+// stale. A failing load leaves the cache untouched.
+func (c *usageCache) value(load func() (StorageUsage, error)) (StorageUsage, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.loaded && (c.ttl <= 0 || time.Since(c.loadedAt) < c.ttl) {
+		return c.usage, nil
+	}
+	usage, err := load()
+	if err != nil {
+		return StorageUsage{}, err
+	}
+	c.usage = usage
+	c.loaded = true
+	c.loadedAt = time.Now()
+	return usage, nil
+}
+
+// add applies a committed write delta. It is deliberately a no-op while the
+// cache is cold so that a partial delta can never masquerade as a full count.
+func (c *usageCache) add(vaultDelta, bodyDelta int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.loaded {
+		return
+	}
+	c.usage.VaultCount += vaultDelta
+	c.usage.BodyBytes += bodyDelta
+	if c.usage.VaultCount < 0 {
+		c.usage.VaultCount = 0
+	}
+	if c.usage.BodyBytes < 0 {
+		c.usage.BodyBytes = 0
+	}
+}
+
+// invalidate forces the next value call to recount.
+func (c *usageCache) invalidate() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.loaded = false
+	c.usage = StorageUsage{}
+}
+
 type storedVault struct {
 	VaultID        string          `json:"vault_id"`
 	Revision       int64           `json:"revision"`
@@ -75,8 +146,9 @@ type Store interface {
 }
 
 type FileStore struct {
-	dir string
-	mu  sync.Mutex
+	dir   string
+	mu    sync.Mutex
+	usage *usageCache
 }
 
 func NewFileStore(dir string) (*FileStore, error) {
@@ -86,7 +158,7 @@ func NewFileStore(dir string) (*FileStore, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	return &FileStore{dir: dir}, nil
+	return &FileStore{dir: dir, usage: newUsageCache(fileStoreUsageTTL)}, nil
 }
 
 func (s *FileStore) HealthCheck(ctx context.Context) error {
@@ -155,6 +227,10 @@ func (s *FileStore) Put(vaultID string, expectedRevision *int64, createOnly bool
 	if err := validateAuthHeader(nextAuthSecret); err != nil {
 		return EncryptedVault{}, err
 	}
+	storedBody, err := compactRaw(body)
+	if err != nil {
+		return EncryptedVault{}, fmt.Errorf("encrypted body must be valid json")
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -172,7 +248,7 @@ func (s *FileStore) Put(vaultID string, expectedRevision *int64, createOnly bool
 			UpdatedAt: now,
 			ClientID:  trimMax(clientID, 96),
 			Device:    trimMax(deviceName, 160),
-			Body:      cloneRaw(body),
+			Body:      storedBody,
 		}
 		initialAuth := strings.TrimSpace(authSecret)
 		if initialAuth == "" {
@@ -189,6 +265,7 @@ func (s *FileStore) Put(vaultID string, expectedRevision *int64, createOnly bool
 		if err := s.write(created); err != nil {
 			return EncryptedVault{}, err
 		}
+		s.usage.add(1, int64(len(created.Body)))
 		return externalVault(created), nil
 	case err != nil:
 		return EncryptedVault{}, err
@@ -203,11 +280,12 @@ func (s *FileStore) Put(vaultID string, expectedRevision *int64, createOnly bool
 	if *expectedRevision != current.Revision {
 		return EncryptedVault{}, ErrConflict
 	}
+	previousBodyBytes := int64(len(current.Body))
 	current.Revision++
 	current.UpdatedAt = time.Now().UTC()
 	current.ClientID = trimMax(clientID, 96)
 	current.Device = trimMax(deviceName, 160)
-	current.Body = cloneRaw(body)
+	current.Body = storedBody
 
 	// A previously unprotected vault can be upgraded by sending an auth secret.
 	// A protected vault can rotate to a new auth secret only after proving the current one.
@@ -224,6 +302,7 @@ func (s *FileStore) Put(vaultID string, expectedRevision *int64, createOnly bool
 	if err := s.write(current); err != nil {
 		return EncryptedVault{}, err
 	}
+	s.usage.add(0, int64(len(current.Body))-previousBodyBytes)
 	return externalVault(current), nil
 }
 
@@ -248,12 +327,17 @@ func (s *FileStore) Delete(vaultID string, expectedRevision *int64, authSecret s
 	} else if *expectedRevision != v.Revision {
 		return ErrConflict
 	}
-	return os.Remove(s.path(vaultID))
+	if err := os.Remove(s.path(vaultID)); err != nil {
+		return err
+	}
+	s.usage.add(-1, -int64(len(v.Body)))
+	return nil
 }
 
 func (s *FileStore) PurgeInactive(cutoff time.Time) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer s.usage.invalidate()
 
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
@@ -279,10 +363,17 @@ func (s *FileStore) PurgeInactive(cutoff time.Time) (int64, error) {
 	return deleted, nil
 }
 
+// Usage reports cached storage usage. The full directory scan runs only when
+// the cache is cold, expired or invalidated; ordinary writes keep the counters
+// current through incremental deltas, so a quota check no longer re-reads every
+// stored vault on each PUT.
 func (s *FileStore) Usage() (StorageUsage, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.usage.value(s.scanUsageLocked)
+}
 
+func (s *FileStore) scanUsageLocked() (StorageUsage, error) {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
 		return StorageUsage{}, err
@@ -329,7 +420,10 @@ func (s *FileStore) read(vaultID string) (storedVault, error) {
 }
 
 func (s *FileStore) write(v storedVault) error {
-	b, err := json.MarshalIndent(v, "", "  ")
+	// Marshal, not MarshalIndent: indenting would reformat the embedded encrypted
+	// body, so the bytes read back would no longer match the bytes that were
+	// accounted for in the storage quota.
+	b, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
@@ -373,6 +467,18 @@ func cloneRaw(in json.RawMessage) json.RawMessage {
 	out := make([]byte, len(in))
 	copy(out, in)
 	return out
+}
+
+// compactRaw normalizes an encrypted body to its whitespace-free form. Storing
+// the normalized bytes makes the payload round-trip byte-identically, which is
+// what lets the quota counters be maintained incrementally without drifting
+// away from a full recount.
+func compactRaw(in json.RawMessage) (json.RawMessage, error) {
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, in); err != nil {
+		return nil, err
+	}
+	return json.RawMessage(buf.Bytes()), nil
 }
 
 func trimMax(value string, max int) string {

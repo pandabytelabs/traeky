@@ -30,14 +30,41 @@ CREATE TABLE IF NOT EXISTS traeky_vaults (
 CREATE INDEX IF NOT EXISTS traeky_vaults_updated_at_idx ON traeky_vaults (updated_at DESC);
 `
 
+// postgresUsageTTL bounds how long cached quota counters are trusted before they
+// are recounted. It is short because other replicas may write concurrently and
+// jsonb normalizes the stored body, so the byte deltas are an estimate between
+// resyncs. That is sufficient for an abuse quota and avoids a full table
+// aggregate on every write.
+const postgresUsageTTL = 30 * time.Second
+
 // PostgresStore stores encrypted vault envelopes in PostgreSQL. It stores only
 // opaque encrypted JSON bodies plus remote-access metadata; it never receives or
 // derives the vault encryption key.
 type PostgresStore struct {
-	pool *pgxpool.Pool
+	pool  *pgxpool.Pool
+	usage *usageCache
 }
 
+// PostgresOptions configures optional PostgresStore behavior.
+type PostgresOptions struct {
+	// AutoMigrate creates the vault table and index on startup. Disable it to
+	// run the cloud API with a least-privilege database role that holds no DDL
+	// rights, and apply postgresMigrationSQL out of band instead.
+	AutoMigrate bool
+}
+
+// NewPostgresStore opens the store and applies the schema migration.
 func NewPostgresStore(ctx context.Context, databaseURL string) (*PostgresStore, error) {
+	return NewPostgresStoreWithOptions(ctx, databaseURL, PostgresOptions{AutoMigrate: true})
+}
+
+// MigrationSQL returns the schema statements the cloud API expects, so that
+// operators running with AutoMigrate disabled can apply them manually.
+func MigrationSQL() string {
+	return postgresMigrationSQL
+}
+
+func NewPostgresStoreWithOptions(ctx context.Context, databaseURL string, opts PostgresOptions) (*PostgresStore, error) {
 	if strings.TrimSpace(databaseURL) == "" {
 		return nil, fmt.Errorf("database url must not be empty")
 	}
@@ -56,10 +83,12 @@ func NewPostgresStore(ctx context.Context, databaseURL string) (*PostgresStore, 
 	if err != nil {
 		return nil, err
 	}
-	store := &PostgresStore{pool: pool}
-	if err := store.migrate(ctx); err != nil {
-		pool.Close()
-		return nil, err
+	store := &PostgresStore{pool: pool, usage: newUsageCache(postgresUsageTTL)}
+	if opts.AutoMigrate {
+		if err := store.migrate(ctx); err != nil {
+			pool.Close()
+			return nil, err
+		}
 	}
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
@@ -116,6 +145,10 @@ func (s *PostgresStore) Put(vaultID string, expectedRevision *int64, createOnly 
 	if err := validateAuthHeader(nextAuthSecret); err != nil {
 		return EncryptedVault{}, err
 	}
+	storedBody, err := compactRaw(body)
+	if err != nil {
+		return EncryptedVault{}, fmt.Errorf("encrypted body must be valid json")
+	}
 
 	ctx, cancel := storeContext()
 	defer cancel()
@@ -139,7 +172,7 @@ func (s *PostgresStore) Put(vaultID string, expectedRevision *int64, createOnly 
 			UpdatedAt: now,
 			ClientID:  trimMax(clientID, 96),
 			Device:    trimMax(deviceName, 160),
-			Body:      cloneRaw(body),
+			Body:      storedBody,
 		}
 		initialAuth := strings.TrimSpace(authSecret)
 		if initialAuth == "" {
@@ -162,6 +195,7 @@ func (s *PostgresStore) Put(vaultID string, expectedRevision *int64, createOnly 
 		if err := tx.Commit(ctx); err != nil {
 			return EncryptedVault{}, err
 		}
+		s.usage.add(1, int64(len(created.Body)))
 		return externalVault(created), nil
 	case err != nil:
 		return EncryptedVault{}, err
@@ -177,11 +211,12 @@ func (s *PostgresStore) Put(vaultID string, expectedRevision *int64, createOnly 
 		return EncryptedVault{}, ErrConflict
 	}
 
+	previousBodyBytes := int64(len(current.Body))
 	current.Revision++
 	current.UpdatedAt = time.Now().UTC()
 	current.ClientID = trimMax(clientID, 96)
 	current.Device = trimMax(deviceName, 160)
-	current.Body = cloneRaw(body)
+	current.Body = storedBody
 
 	if strings.TrimSpace(nextAuthSecret) != "" {
 		if err := setVaultAuth(&current, nextAuthSecret); err != nil {
@@ -199,6 +234,7 @@ func (s *PostgresStore) Put(vaultID string, expectedRevision *int64, createOnly 
 	if err := tx.Commit(ctx); err != nil {
 		return EncryptedVault{}, err
 	}
+	s.usage.add(0, int64(len(current.Body))-previousBodyBytes)
 	return externalVault(current), nil
 }
 
@@ -237,12 +273,17 @@ func (s *PostgresStore) Delete(vaultID string, expectedRevision *int64, authSecr
 	if err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	s.usage.add(-1, -int64(len(v.Body)))
+	return nil
 }
 
 func (s *PostgresStore) PurgeInactive(cutoff time.Time) (int64, error) {
 	ctx, cancel := storeContext()
 	defer cancel()
+	defer s.usage.invalidate()
 	commandTag, err := s.pool.Exec(ctx, `DELETE FROM traeky_vaults WHERE updated_at < $1`, cutoff.UTC())
 	if err != nil {
 		return 0, err
@@ -250,7 +291,13 @@ func (s *PostgresStore) PurgeInactive(cutoff time.Time) (int64, error) {
 	return commandTag.RowsAffected(), nil
 }
 
+// Usage reports cached storage usage. The aggregate scan runs at most once per
+// postgresUsageTTL; in between, committed writes keep the counters current.
 func (s *PostgresStore) Usage() (StorageUsage, error) {
+	return s.usage.value(s.queryUsage)
+}
+
+func (s *PostgresStore) queryUsage() (StorageUsage, error) {
 	ctx, cancel := storeContext()
 	defer cancel()
 
