@@ -65,12 +65,11 @@ jobs:
             echo "publish=${publish}"
             echo "commit=${commit}"
             echo "channel=${channel}"
-            echo 'tag_rules<<EOF_TAG_RULES'
+            echo 'channel_tags<<EOF_TAG_RULES'
             if [[ "${publish}" == "true" ]]; then
               for tag in ${tags}; do
                 echo "type=raw,value=${tag}"
               done
-              echo "type=sha,prefix=sha-"
             fi
             echo 'EOF_TAG_RULES'
           } >> "$GITHUB_OUTPUT"
@@ -103,6 +102,41 @@ jobs:
         with:
           username: ${{ env.DOCKERHUB_USERNAME }}
           password: ${{ env.DOCKERHUB_TOKEN }}
+      # Runs after checkout: the source version and the commit that was actually
+      # built are only knowable here. metadata-action's own type=sha would tag
+      # github.sha, which for a workflow_run event is the default branch head and
+      # not the ref this job checked out.
+      - name: Resolve source version
+        if: ${{ steps.publish.outputs.publish == 'true' }}
+        id: version
+        shell: bash
+        env:
+          CHANNEL: ${{ steps.publish.outputs.channel }}
+          COMMIT: ${{ steps.publish.outputs.commit }}
+        run: |
+          set -euo pipefail
+
+          version="$(tr -d '[:space:]' < internal/buildinfo/version.txt)"
+          version="${version#v}"
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "version.txt does not contain a usable version: '${version}'" >&2
+            exit 1
+          fi
+
+          {
+            echo "version=${version}"
+            echo 'extra_tags<<EOF_EXTRA'
+            echo "type=raw,value=sha-${COMMIT::7}"
+            # Only the stable channel carries the release number: develop can be
+            # ahead of the released version.
+            if [[ "${CHANNEL}" == "stable" ]]; then
+              echo "type=raw,value=${version}"
+            fi
+            echo 'EOF_EXTRA'
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Publishing ${CHANNEL} channel as version ${version} from ${COMMIT}"
+
       - name: Resolve image names
         if: ${{ steps.publish.outputs.publish == 'true' }}
         id: images
@@ -127,13 +161,23 @@ jobs:
         id: meta-dashboard
         with:
           images: ${{ steps.images.outputs.dashboard }}
-          tags: ${{ steps.publish.outputs.tag_rules }}
+          tags: |
+            ${{ steps.publish.outputs.channel_tags }}
+            ${{ steps.version.outputs.extra_tags }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.revision=${{ steps.publish.outputs.commit }}
       - uses: docker/metadata-action@v6
         if: ${{ steps.publish.outputs.publish == 'true' }}
         id: meta-cloud
         with:
           images: ${{ steps.images.outputs.cloud }}
-          tags: ${{ steps.publish.outputs.tag_rules }}
+          tags: |
+            ${{ steps.publish.outputs.channel_tags }}
+            ${{ steps.version.outputs.extra_tags }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.revision=${{ steps.publish.outputs.commit }}
       - name: Build and publish Dashboard image
         if: ${{ steps.publish.outputs.publish == 'true' }}
         uses: docker/build-push-action@v7
