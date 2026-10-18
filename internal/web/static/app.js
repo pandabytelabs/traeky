@@ -2980,7 +2980,7 @@ function renderTxTable(items) {
         <td><span class="badge ${tx.tx_type.toLowerCase()}">${escapeHTML(txLabel(tx.tx_type))}</span></td>
         <td><b>${escapeHTML(tx.asset_symbol)}</b><br/><span class="smallprint">${escapeHTML(tx.note || tx.tx_id || '')}</span></td>
         <td>${fmtNum(tx.amount)}</td>
-        <td>${tx.price_fiat == null ? '–' : fmtMoney(tx.price_fiat, tx.fiat_currency)}</td>
+        <td>${tx.price_fiat != null ? fmtMoney(tx.price_fiat, tx.fiat_currency) : unitPrice != null ? `<span title="${escapeHTML(t('price_derived_hint'))}">≈ ${fmtMoney(unitPrice, base)}</span>` : '–'}</td>
         <td>${txVal != null ? fmtMoney(txVal, base) : '–'}</td>
         <td>${escapeHTML(txProfileName(tx.profile_id))}</td>
         <td class="tx-source-cell">${escapeHTML(tx.source || '–')}</td>
@@ -3503,7 +3503,7 @@ function renderTxDialog() {
       <div class="form-row"><label>${t('profile')}</label><select name="profile_id">${txProfileOptions(activeTxProfileID())}</select></div>
       <div class="form-row inline"><div><label>${t('asset')}</label><input name="asset_symbol" placeholder="${t('asset_placeholder')}" required /></div><div><label>${t('type')}</label><select name="tx_type">${TX_TYPES.map(v => `<option value="${v}">${txLabel(v)}</option>`).join('')}</select></div></div>
       <div class="form-row inline"><div><label>${t('amount')}</label><input name="amount" type="number" step="any" required /></div><div><label>${t('timestamp')}</label><input name="timestamp" type="datetime-local" required /></div></div>
-      <div class="form-row inline"><div><label>${t('price_per_asset')}</label><input name="price_fiat" type="number" step="any" /></div><div><label>${t('fiat')}</label><select name="fiat_currency"><option>EUR</option><option>USD</option><option>CHF</option><option>GBP</option><option>USDT</option><option>USDC</option></select></div></div>
+      <div class="form-row inline"><div><label>${t('price_per_asset')}</label><input name="price_fiat" type="number" step="any" aria-describedby="tx-price-hint" /><p class="smallprint" id="tx-price-hint">${t(priceFetchEnabled(session.data) ? 'tx_price_hint_fetch' : 'tx_price_hint_cache')}</p></div><div><label>${t('fiat')}</label><select name="fiat_currency"><option>EUR</option><option>USD</option><option>CHF</option><option>GBP</option><option>USDT</option><option>USDC</option></select></div></div>
       <div class="form-row inline"><div><label>${t('exchange_source')}</label><input name="source" placeholder="Binance, Bitpanda …" /></div><div><label>Tx-ID</label><input name="tx_id" /></div></div>
       <div class="form-row"><label>${t('note')}</label><textarea name="note"></textarea></div>
       <details class="advanced-box"><summary>${t('event_details')}</summary>
@@ -3591,19 +3591,25 @@ function bindDashboard() {
   $('#tx-form')?.addEventListener('submit', saveTxFromForm);
   const _txAutoFillForm = $('#tx-form');
   if (_txAutoFillForm) {
-    const _autoFillTxPrice = () => {
-      const priceField = field(_txAutoFillForm, 'price_fiat');
-      if (priceField.value !== '') return;
+    const priceField = field(_txAutoFillForm, 'price_fiat');
+    // An auto-filled price follows asset/currency/time changes until the user types one.
+    priceField.addEventListener('input', () => { delete priceField.dataset.autofilled; });
+    const _autoFillTxPrice = async () => {
+      const userPrice = () => priceField.value !== '' && priceField.dataset.autofilled !== '1';
+      if (userPrice()) return;
       const assetRaw = (field(_txAutoFillForm, 'asset_symbol').value || '').trim().toUpperCase();
       if (!assetRaw) return;
       const asset = canonicalAssetSymbol(assetRaw, session.data?.asset_aliases);
       const currency = (field(_txAutoFillForm, 'fiat_currency').value || session.data?.config?.base_currency || 'EUR').toUpperCase();
       const tsInput = field(_txAutoFillForm, 'timestamp').value;
       const timestamp = tsInput ? new Date(tsInput).toISOString() : nowISO();
-      const cached = priceCacheLookup(session.data, asset, currency, timestamp);
-      if (cached != null) { priceField.value = cached; return; }
-      const live = session.data?.prices?.[asset]?.[currency.toLowerCase()];
-      if (Number.isFinite(Number(live))) priceField.value = live;
+      const request = `${asset}|${currency}|${timestamp}`;
+      priceField.dataset.autofillRequest = request;
+      const { price } = await resolveTxPrice(session.data, asset, currency, timestamp);
+      if (priceField.dataset.autofillRequest !== request || userPrice()) return;
+      if (price == null) { if (priceField.dataset.autofilled === '1') { priceField.value = ''; delete priceField.dataset.autofilled; } return; }
+      priceField.value = price;
+      priceField.dataset.autofilled = '1';
     };
     field(_txAutoFillForm, 'asset_symbol')?.addEventListener('change', _autoFillTxPrice);
     field(_txAutoFillForm, 'fiat_currency')?.addEventListener('change', _autoFillTxPrice);
@@ -3697,6 +3703,8 @@ function openTxDialog(id = null) {
   field(form, 'amount').value = tx?.amount ?? '';
   field(form, 'timestamp').value = toLocalInput(tx?.timestamp || nowISO());
   field(form, 'price_fiat').value = tx?.price_fiat ?? '';
+  delete field(form, 'price_fiat').dataset.autofilled;
+  delete field(form, 'price_fiat').dataset.autofillRequest;
   field(form, 'fiat_currency').value = tx?.fiat_currency || session.data.config.base_currency || 'EUR';
   field(form, 'source').value = tx?.source || '';
   field(form, 'tx_id').value = tx?.tx_id || '';
@@ -3740,6 +3748,17 @@ async function saveTxFromForm(e) {
     ignored: field(f, 'ignored').checked
   });
   if (!tx) return;
+  if (tx.price_fiat == null && tx.fiat_value == null) {
+    const submit = f.querySelector('[type="submit"]');
+    if (submit) submit.disabled = true;
+    try {
+      const { price, error } = await resolveTxPrice(session.data, tx.asset_symbol, tx.fiat_currency, tx.timestamp);
+      if (price != null) tx.price_fiat = price;
+      else if (error) alert(`${t('historical_price_failed')}: ${error.message || error}`);
+    } finally {
+      if (submit) submit.disabled = false;
+    }
+  }
   const existingIndex = session.data.transactions.findIndex(t => t.id === id);
   if (existingIndex >= 0) session.data.transactions[existingIndex] = tx; else session.data.transactions.push(tx);
   updateAssetRegistryFromTx(tx);
@@ -4262,6 +4281,51 @@ function formatTxType(value) {
 
 function num(value) {
   return Number(value).toFixed(2).replace(/\.00$/, '');
+}
+
+// Looks up the asset's CoinGecko daily price (00:00 UTC snapshot) for the
+// transaction day and stores it in the price cache. Never reaches the network
+// without the price-fetch opt-in; returns null when no price is available.
+async function fetchHistoricalPrice(data, symbol, currency, timestamp) {
+  const asset = canonicalAssetSymbol(symbol, data?.asset_aliases);
+  const quote = canonicalAssetSymbol(currency || data?.config?.base_currency || 'EUR', data?.asset_aliases);
+  const day = String(timestamp || nowISO()).slice(0, 10);
+  const cached = normalizePriceCache(data?.price_cache || []).find(p => p.asset === asset && p.quote === quote && p.date === day);
+  if (cached) return cached.price;
+  if (!session.unlocked || !priceFetchEnabled(data) || day > nowISO().slice(0, 10)) return null;
+  const coinID = data.assets?.[asset]?.coingecko || ASSET_META[asset]?.coingecko;
+  if (!coinID) return null;
+  const [y, m, d] = day.split('-');
+  const params = new URLSearchParams({ date: `${d}-${m}-${y}`, localization: 'false' });
+  if (data.config.coingecko_api_key) params.set('x_cg_demo_api_key', data.config.coingecko_api_key);
+  const res = await fetch(`https://api.coingecko.com/api/v3/coins/${encodeURIComponent(coinID)}/history?${params}`);
+  if (!res.ok) throw new Error(`CoinGecko HTTP ${res.status}`);
+  const body = await res.json();
+  const market = body?.market_data?.current_price || {};
+  // Stablecoin quotes have no own column at CoinGecko; USD is the closest match.
+  const pick = q => market[q.toLowerCase()] ?? (['USDT', 'USDC'].includes(q) ? market.usd : undefined);
+  const fetchedAt = nowISO();
+  const rows = [...new Set([quote, 'EUR', 'USD'])]
+    .map(q => ({ asset, quote: q, date: day, price: Number(pick(q)), source: 'coingecko-history', updated_at: fetchedAt }))
+    .filter(row => row.price != null && Number.isFinite(row.price) && row.price > 0);
+  if (!rows.length) return null;
+  data.price_cache = normalizePriceCache([...(data.price_cache || []), ...rows]);
+  return rows.find(row => row.quote === quote)?.price ?? null;
+}
+
+// Determines a unit price for a transaction whose price field was left empty:
+// the CoinGecko price of that day, else the price cache, else (for today only)
+// the live price. `error` is set when the CoinGecko lookup itself failed.
+async function resolveTxPrice(data, symbol, currency, timestamp) {
+  const asset = canonicalAssetSymbol(symbol, data?.asset_aliases);
+  let price = null, error = null;
+  try { price = await fetchHistoricalPrice(data, asset, currency, timestamp); } catch (err) { error = err; }
+  if (price == null) price = priceCacheLookup(data, asset, currency, timestamp);
+  if (price == null && String(timestamp).slice(0, 10) === nowISO().slice(0, 10)) {
+    const live = Number(data?.prices?.[asset]?.[String(currency).toLowerCase()]);
+    if (Number.isFinite(live) && live > 0) price = live;
+  }
+  return { price: price == null ? null : Number(price), error };
 }
 
 async function refreshPrices(options = {}) {
